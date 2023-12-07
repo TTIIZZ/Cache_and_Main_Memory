@@ -3,5 +3,8 @@
 
 typedef struct cache_block
 {
-jfwaeiolksdvz/mxc.,	
+	unsigned valid : 1;
+	unsigned tag : 2;
+	unsigned count : 2;
+	unsigned data : 64;
 } cache_block;
