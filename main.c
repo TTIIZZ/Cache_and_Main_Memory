@@ -39,13 +39,25 @@ int main(void)
 	for (int i = 0; i < 4; i++) Cache[i] = (cache_set)calloc(4, sizeof(cache_block));
 	Main = (main_memory)calloc(256, sizeof(byte));
 
+	// word 출력 가능한 점 확인
 	printf("Project Start!\n");
-	Cache[0][0].data = 0xfffff;
-	printf("%d\n", (word)(Cache[0][0].data & 0xffff));
-	Cache[0][0].data = Cache[0][0].data & 0xf0000;
-	printf("%d\n", (word)(Cache[0][0].data & 0xffff));
-	Cache[0][0].data = Cache[0][0].data | 0x0f0f0;
-	printf("%d\n", (word)(Cache[0][0].data & 0xffff));
+	Cache[0][0].data = 0xffffffffff;
+	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
+	Cache[0][0].data = 0x0000000000;
+	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
+	Cache[0][0].data = 0x0f0f0f0f0f;
+	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
+
+	// bit연산으로 인덱스 계산 가능한 점 확인
+	printf("\n\n");
+	printf("%x\n", (word)(Cache[1][0].data & 0xffffffff));
+	Cache[1][0].data = 0xf0f0f0f0f0;
+	int index = 0 + 0b01;
+	printf("%x\n", (word)(Cache[index][0].data & 0xffffffff));
+
+	// word 이외의 단위로도 출력 가능한 점 확인
+	printf("\n\n");
+	printf("%x\n", (halfword)(Cache[index][0].data & 0xff));
 
 	for (int i = 0; i < 4; i++) free(Cache[i]);
 	free(Cache);
