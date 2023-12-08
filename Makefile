@@ -1,11 +1,12 @@
-MAIN=main
+main: main.o function.o
+	gcc -o main main.o function.o
 
-$(MAIN): $(MAIN).o
-	gcc -o $(MAIN) $(MAIN).o
+main.o: main.c
+	gcc -c main.c
 
-$(MAIN).o: $(MAIN).c
-	gcc -c $(MAIN).c
+function.o: function.c
+	gcc -c function.c
 
 clean:
-	rm $(MAIN) $(MAIN).o
+	rm main main.o function.o
 

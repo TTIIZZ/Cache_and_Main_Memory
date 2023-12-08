@@ -16,52 +16,38 @@
 // valid, dirty: 기존 의미와 같음.
 // count: LRU를 위한 bit. 2bits 할당.
 // tag: 8-2-2 = 4. (offset bit 2개, index bit 2개 빼기)
-typedef struct cache_block
+typedef struct CacheBlock
 {
 	// valid:1 / dirty:1 / count:2 / tag:4 / data:32 -> 총합 40.
 	unsigned long long data : 40;
-} cache_block;
-typedef struct cache_block* cache_set;
-typedef struct cache_block** cache_memory;
+} CacheBlock;
+typedef CacheBlock* CacheSet;
+typedef CacheSet* CacheMemory;
 
-typedef char byte;
-typedef short halfword;
-typedef int word;
+typedef char Byte;
+typedef short HalfWord;
+typedef int Word;
+typedef unsigned char Address;
 
-typedef word* main_memory;
+typedef unsigned char* MainMemory;
 
-cache_memory Cache;
-main_memory Main;
+CacheMemory cache_memory;
+MainMemory main_memory;
+
+void CacheAccess();
+unsigned char GetHash();
 
 int main(void)
 {
-	Cache = (cache_memory)calloc(4, sizeof(cache_set));
-	for (int i = 0; i < 4; i++) Cache[i] = (cache_set)calloc(4, sizeof(cache_block));
-	Main = (main_memory)calloc(256, sizeof(byte));
+	cache_memory = (CacheMemory)calloc(4, sizeof(CacheSet));
+	for (int i = 0; i < 4; i++) cache_memory[i] = (CacheSet)calloc(4, sizeof(CacheBlock));
+	main_memory = (MainMemory)calloc(256, sizeof(Byte));
 
-	// word 출력 가능한 점 확인
-	printf("Project Start!\n");
-	Cache[0][0].data = 0xffffffffff;
-	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
-	Cache[0][0].data = 0x0000000000;
-	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
-	Cache[0][0].data = 0x0f0f0f0f0f;
-	printf("%x\n", (word)(Cache[0][0].data & 0xffffffff));
+	CacheAccess(0x0c);
 
-	// bit연산으로 인덱스 계산 가능한 점 확인
-	printf("\n\n");
-	printf("%x\n", (word)(Cache[1][0].data & 0xffffffff));
-	Cache[1][0].data = 0xf0f0f0f0f0;
-	int index = 0 + 0b01;
-	printf("%x\n", (word)(Cache[index][0].data & 0xffffffff));
-
-	// word 이외의 단위로도 출력 가능한 점 확인
-	printf("\n\n");
-	printf("%x\n", (halfword)(Cache[index][0].data & 0xff));
-
-	for (int i = 0; i < 4; i++) free(Cache[i]);
-	free(Cache);
-	free(Main);
+	for (int i = 0; i < 4; i++) free(cache_memory[i]);
+	free(cache_memory);
+	free(main_memory);
 
 	return 0;
 }
