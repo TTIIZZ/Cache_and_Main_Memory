@@ -24,6 +24,7 @@ void CacheAccess(Address address)
 	printf("%x\n", address);
 	printf("%x\n", GetIndex(address));
 }
+
 // cache memory에서의 set index를 찾을 hash function.
 unsigned char GetIndex(Address address)
 {
