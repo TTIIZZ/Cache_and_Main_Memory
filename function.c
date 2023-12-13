@@ -15,14 +15,14 @@ typedef unsigned char Address;
 
 typedef unsigned char* MainMemory;
 
-void CacheAccess(Address address);
+void CacheAccess(CacheMemory cache_memory, Address address);
 unsigned char GetIndex(Address address);
 
 // 주어진 address를 이용해 cache 메모리에 접근할 함수.
-void CacheAccess(Address address)
+void CacheAccess(CacheMemory cache_memory, Address address)
 {
 	printf("%x\n", address);
-	printf("%x\n", GetIndex(address));
+	printf("%x\n", (Word)cache_memory[GetIndex(address)][0].data & 0xffffffff);
 }
 
 // cache memory에서의 set index를 찾을 hash function.

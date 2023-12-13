@@ -43,7 +43,9 @@ int main(void)
 	for (int i = 0; i < 4; i++) cache_memory[i] = (CacheSet)calloc(4, sizeof(CacheBlock));
 	main_memory = (MainMemory)calloc(256, sizeof(Byte));
 	for (int i = 0x0; i <= 0xff; i++) main_memory[i] = i;  // address와 data를 같은 2진수로 초기화
-	
+
+	cache_memory[0][0].data = cache_memory[0][0].data | 0x0f0f0f0f0f;
+	CacheAccess(cache_memory, 0x11);	
 
 	for (int i = 0; i < 4; i++) free(cache_memory[i]);
 	free(cache_memory);
