@@ -1,12 +1,7 @@
-main: main.o function.o
-	gcc -o main main.o function.o
-
-main.o: main.c
-	gcc -c main.c
-
-function.o: function.c
-	gcc -c function.c
+make: main.c input.c 
+	gcc -o main main.c
+	gcc -o input input.c
 
 clean:
-	rm main main.o function.o
+	rm main input
 
