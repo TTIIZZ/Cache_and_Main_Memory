@@ -67,11 +67,11 @@ void FreeCache();
 void PrintCache();
 
 int Read(Address address, int size);
-CacheBlock* CacheAccess(Address address, int level);
+CacheBlock* CacheAccess(Address address, int now_level);
 CacheBlock* MakeBlock(Address address);
 void FreeBlock(CacheBlock* temp_block, unsigned char index);
-unsigned short GetIndex(Address address, int level);
-unsigned short GetTag(Address address, int level);
+unsigned short GetIndex(Address address, int now_level);
+unsigned short GetTag(Address address, int now_level);
 
 int main(void)
 {
@@ -100,21 +100,22 @@ int main(void)
 		scanf("%d", &level);
 		MakeCache();
 
-		PrintCache();
-
-/*
-
 		char type;
 		int temp_address;
 		Address address;
 	
 		while (1)
 		{
+			printf("Input the access type [R / W / Q]: ");
 			scanf(" %c", &type);
 			if (type == 'Q' || type == 'q') break;
 
 			scanf("%x", &temp_address);
-			address = temp_address & 0xff;
+			address = temp_address & 0xffff;
+
+			printf("tag: %x / index: %x\n", GetTag(address, 1), GetIndex(address, 1));
+			
+			/*
 			switch (type)
 			{
 				case 'R': case 'r':
@@ -131,11 +132,10 @@ int main(void)
 					printf("유효하지 않은 입력입니다.\n");
 				
 			}
-			// PrintCache();
+			*/
 		}
 
 		PrintCache();
-*/
 
 		// 캐시 메모리와 메인 메모리 해제
 		FreeCache();
@@ -364,7 +364,7 @@ int Read(Address address, int size)
 	CacheBlock* block;  // cache에 접근해 가져온 block의 주소
 	for (int i = 0; i < access_num; i++)
 	{
-		block = CacheAccess(address);
+		//block = CacheAccess(address, 1);
 		for (int j = 0; j < size; j++)
 		{
 			printf("%3x ", block->data[base_offset + j]);
@@ -376,9 +376,9 @@ int Read(Address address, int size)
 	printf("\n");
 	return 0;
 }
-
+/*
 // 주어진 address를 이용해 cache 메모리에 접근한 후, cache block의 주소를 반환할 함수.
-CacheBlock* CacheAccess(Address address, int level)
+CacheBlock* CacheAccess(Address address, int now_level)
 {
         // 주어진 address에서 index와 tag 구하기.
         unsigned char index = GetIndex(address), tag = GetTag(address);
@@ -451,7 +451,7 @@ CacheBlock* CacheAccess(Address address, int level)
 
 	return new_block;
 }
-
+*/
 /*
 // 주어진 address를 이용해 새로운 cache block를 만들 함수
 CacheBlock* MakeBlock(Address address)
@@ -479,17 +479,25 @@ void FreeBlock(CacheBlock* temp_block, unsigned char index)
 */
 
 // 주어진 address로 cache memory에서의 set index를 찾을 hash function.
-unsigned short GetIndex(Address address, int level)
+unsigned short GetIndex(Address address, int now_level)
 {
-	int tag_bit = cache_memory[level].tag_bit;
-	int offset_bit = cache_memory[level].offset_bit;
-        return (address << tag_bit) >> (tag_bit + offset_bit);
+	int index_bit = cache_memory[now_level].index_bit;
+	int offset_bit = cache_memory[now_level].offset_bit;
+
+	Address filter = 0;
+	for (int i = 0; i < index_bit; i++)
+	{
+		filter <<= filter;
+		filter += 1;
+	}
+
+        return (address >> offset_bit) & filter;
 }
 
 // 주어진 address로 tag를 찾을 hash function.
-unsigned short GetTag(Address address, int level)
+unsigned short GetTag(Address address, int now_level)
 {
-	int index_bit = cache_memory[level].index_bit;
-	int offset_bit = cache_memory[level].offset_bit;
+	int index_bit = cache_memory[now_level].index_bit;
+	int offset_bit = cache_memory[now_level].offset_bit;
         return address >> (index_bit + offset_bit);
 }
