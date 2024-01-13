@@ -12,7 +12,7 @@
 // evict를 위해 LRU 알고리즘을 이용함
 // double linked list 이용 (LRU block이 가장 뒤에 연결)
 
-// 메인 메모리의 크기는 64MB. (16-bit address -> (2^16)B = (2^6 * 2 ^10)B = 64MB)
+// 메인 메모리의 크기는 64MB. (16-bit address -> (2^16)B = (2^6 * 2 ^10)B = 64MB = 65536B)
 // **************************************************************************
 
 // cache block
@@ -24,7 +24,7 @@ typedef struct CacheBlock
 {
 	unsigned char dirty : 1;
 	unsigned short tag;
-	char* data;
+	unsigned char* data;
 
 	struct CacheBlock* left;
 	struct CacheBlock* right;
@@ -49,29 +49,29 @@ typedef struct CacheMemory
 	int set_num;
 	int cache_size;
 	int tag_bit, index_bit, offset_bit;
+	int access_count, hit_count, miss_count;
 	CacheSet* set;
 } CacheMemory;
 
-CacheMemory cache_memory[3];
+// 모든 cache memory의 정보를 저장할 배열과, cache memory의 총 레벨
+CacheMemory* cache_memory;
+int level;
 
 // main memory
 typedef unsigned short Address;
 typedef char* MainMemory;
 MainMemory main_memory;
 
-int access_count;
-int hit_count;
-int miss_count;
+void MakeCache();
+void FreeCache();
+void PrintCache();
 
-int MakeCache(int level);
-void Read(Address address, int size);
-CacheBlock* CacheAccess(Address address, int size);
+int Read(Address address, int size);
+CacheBlock* CacheAccess(Address address, int level);
 CacheBlock* MakeBlock(Address address);
 void FreeBlock(CacheBlock* temp_block, unsigned char index);
-unsigned char GetIndex(Address address);
-unsigned char GetTag(Address address);
-void PrintCache();
-void FreeCache(int level);
+unsigned short GetIndex(Address address, int level);
+unsigned short GetTag(Address address, int level);
 
 int main(void)
 {
@@ -96,8 +96,11 @@ int main(void)
 		}
 		if (!execution) break;
 
-		while (!MakeCache(1)) break;
-		while (!MakeCache(2)) break;
+		printf("What is the max level of cache memory?: ");
+		scanf("%d", &level);
+		MakeCache();
+
+		PrintCache();
 
 /*
 
@@ -135,8 +138,7 @@ int main(void)
 */
 
 		// 캐시 메모리와 메인 메모리 해제
-		FreeCache(1);
-		FreeCache(2);
+		FreeCache();
 		//free(main_memory);
 
 	}
@@ -145,114 +147,239 @@ int main(void)
 }
 
 // 캐시 메모리를 생성할 함수
-// level 변수를 통해 level 1, 2 캐시메모리를 구분
 // 블럭의 사이즈, 한 셋의 블럭 수, 셋의 개수를 입력받은 후 유효한 입력이라면 메모리 할당
-// 입력한 수가 2의 제곱수인지 확인, 총 캐시 사이즈를 구했을 때 메인메모리보다 작은지 확인
-int MakeCache(int level)
+// 입력한 수가 2의 제곱수인지 확인
+// 블럭 사이즈가 상위 메모리보다 큰지 확인
+// 총 캐시 사이즈를 구했을 때 상위 메모리보다 크고, 메인메모리보다 작은지 확인
+void MakeCache()
 {
-	// level에 따라 만들 캐시메모리 결정
-	if (level == 1) printf("Let's make a level 1 cache memory!\n");
-	else printf("Let's make a level 2 cache memory!\n");
-
-	// block size 확인
-	if (isatty(0)) printf("Please input the size of cache block: ");
-        scanf("%d", &cache_memory[level].block_size);
-	cache_memory[level].offset_bit = 0;
-        for (int i = cache_memory[level].block_size; i > 1; i /= 2, cache_memory[level].offset_bit++)
+	// 모든 cache memory를 담을 배열 선언
+	cache_memory = (CacheMemory*)calloc(level + 1, sizeof(CacheMemory));
+	
+	// 상위의 cache memory부터 차례로 선언
+	// now_level: 현재 캐시메모리의 level
+        for (int now_level = 1; now_level <= level; now_level++)
         {
-        	if (i % 2 == 1) cache_memory[level].block_size = 0;
-	}
+		// now_level의 cache memory
+		CacheMemory* now_cache = &cache_memory[now_level];
 
-	// block 개수 확인
-        if (isatty(0)) printf("Please input the number of cache block in one set: ");
-        scanf("%d", &cache_memory[level].block_num);
-	for (int i = cache_memory[level].block_num; i > 1; i /= 2)
-	{
-		if (i % 2 == 1) cache_memory[level].block_num = 0;
-	}
-
-	// set 개수 확인
-	if (isatty(0)) printf("Please input the number of cache set: ");
-	scanf("%d", &cache_memory[level].set_num);
-	cache_memory[level].index_bit = 0;
-	for (int i = cache_memory[level].set_num; i > 1; i /= 2, cache_memory[level].index_bit++)
-	{
-		if (i % 2 == 1) cache_memory[level].set_num = 0;
-	}
-
-	cache_memory[level].tag_bit = 16 - (cache_memory[level].index_bit + cache_memory[level].offset_bit);
-
-	// 어떤 입력이 틀렸는지 출력
-	if (cache_memory[level].block_size <= 0 || cache_memory[level].block_num <= 0 || cache_memory[level].set_num <= 0)
-	{
-		printf("Wrong input: ");
-		if (cache_memory[level].block_size <= 0) printf("block size");
-		if (cache_memory[level].block_num <= 0)
+		// 입력이 잘못되었을 시 continue를 통해 다시 입력
+                while (1)
 		{
-			if (cache_memory[level].block_size <= 0) printf(" / ");
-			printf("block num");
+			// level에 따라 만들 캐시메모리 결정
+			printf("Let's make a level %d cache memory!\n", now_level);
+
+			// block size 입력 후 확인 (offset bit의 수 구하기)
+			if (isatty(0)) printf("Please input the size of cache block: ");
+        		scanf("%d", &now_cache->block_size);
+			now_cache->offset_bit = 0;
+        		for (int i = now_cache->block_size; i > 1; i /= 2, now_cache->offset_bit++)
+        		{
+        			if (i % 2 == 1) now_cache->block_size = 0;
+			}
+
+			// block 개수 입력 후 확인
+        		if (isatty(0)) printf("Please input the number of cache block in one set: ");
+        		scanf("%d", &now_cache->block_num);
+			for (int i = now_cache->block_num; i > 1; i /= 2)
+			{
+				if (i % 2 == 1) now_cache->block_num = 0;
+			}
+
+			// set 개수 입력 후 확인 (index bit의 수 구하기)
+			if (isatty(0)) printf("Please input the number of cache set: ");
+			scanf("%d", &now_cache->set_num);
+			now_cache->index_bit = 0;
+			for (int i = now_cache->set_num; i > 1; i /= 2, now_cache->index_bit++)
+			{
+				if (i % 2 == 1) now_cache->set_num = 0;
+			}
+
+			// 구해놓은 index bit, offset bit를 이용해 tag bit의 수 구하기
+			now_cache->tag_bit = 16 - (now_cache->index_bit + now_cache->offset_bit);
+
+			// 틀린 입력이 있다면 출력을 통해 명시한 후 재입력
+			if (now_cache->block_size <= 0 || now_cache->block_num <= 0 || now_cache->set_num <= 0)
+			{
+				printf("Wrong input: ");
+				if (now_cache->block_size <= 0) printf("block size");
+				if (now_cache->block_num <= 0)
+				{
+					if (now_cache->block_size <= 0) printf(" / ");
+					printf("block num");
+				}
+				if (now_cache->set_num <= 0)
+				{
+					if (now_cache->block_size <= 0 || now_cache->block_num <= 0) printf(" / ");
+					printf("set num");
+				}
+				printf("\n");
+
+				continue;
+			}
+
+			// block size와 cache size 확인
+			// block size가 상위 메모리보다 작거나, cache size가 메인 메모리보다 크다면 재입력
+			now_cache->cache_size = now_cache->block_size * now_cache->block_num * now_cache->set_num;
+			int wrong = 0;
+			if (now_level > 1)
+        		{
+                		if (now_cache->block_size < cache_memory[now_level - 1].block_size)
+                		{
+                        		printf("Level %d cache block is smaller than level %d cache!\n", now_level, now_level - 1);
+                        		wrong = -1;
+                		}
+        		}
+			if (now_cache->cache_size > 65536)
+			{
+				printf("Level %d cache size is bigger than the size of main memory!\n", now_level);
+				wrong = -1;
+			}
+			if (wrong == -1) continue;
+
+			break;
 		}
-		if (cache_memory[level].set_num <= 0)
-		{
-			if (cache_memory[level].block_size <= 0 || cache_memory[level].block_num <= 0) printf(" / ");
-			printf("set num");
-		}
+
+		// 모두 가능한 입력임을 확인했으므로 현재 cache memory에 set의 메모리 선언
+		now_cache->set = (CacheSet*)calloc(now_cache->set_num, sizeof(CacheSet));
+
+		printf("%d %d %d\n", now_cache->block_size, now_cache->block_num, now_cache->set_num);
+		printf("%d %d %d\n", now_cache->tag_bit, now_cache->index_bit, now_cache->offset_bit);
 		printf("\n");
-
-		return -1;
 	}
-
-	// cache size 확인
-	cache_memory[level].cache_size = cache_memory[level].block_size * cache_memory[level].block_num * cache_memory[level].set_num;
-	if (level == 1)
-	{
-		if (cache_memory[level].cache_size > 65536)
-		{
-			printf("Level 1 cache size is too big!\n");
-			return -1;
-		}
-	}
-	else
-	{
-		int wrong = 0;
-		if (cache_memory[2].block_size < cache_memory[1].block_size)
-		{
-			printf("Level 2 cache block is smaller than level 1 cache!\n");
-			wrong = -1;
-		}
-		if (cache_memory[2].cache_size > 65536)
-		{
-			printf("Level 2 cache size is too big!\n");
-			wrong = -1;
-		}
-		if (wrong < 0) return -1;
-	}
-
-	cache_memory[level].set = (CacheSet*)calloc(cache_memory[level].set_num, sizeof(CacheSet));
-
-	printf("%d %d %d\n", cache_memory[level].block_size, cache_memory[level].block_num, cache_memory[level].set_num);
-	printf("%d %d %d\n", cache_memory[level].tag_bit, cache_memory[level].index_bit, cache_memory[level].offset_bit);
-
-	return 0;
-}
-
-/*
-void Read(Address address, int size)
-{
-        CacheBlock* block = CacheAccess(address, size);
-
-	int offset = address & 0x3;
-	unsigned char data = (block->data >> (24 - 8 * offset)) & 0xff;
-        printf("%x\n", data);
 
 	return;
 }
 
-// 주어진 address를 이용해 cache 메모리에 접근한 후, cache block의 주소를 반환할 함수.
-CacheBlock* CacheAccess(Address address, int size)
+// cache 메모리를 해제할 함수
+// 현재 cache의 set 개수를 구한 후, 각 set의 모든 block의 메모리 해제 후 모든 set의 메모리 해제
+// 모든 cache의 set 메모리 해제가 끝났을 때 cache 전체의 메모리 해제
+void FreeCache()
 {
-	access_count++;
+        // now_level: 현재 cache memory의 level
+        for (int now_level = 1; now_level <= level; now_level++)
+        {
+                // set 개수를 구한 후 set 0부터 차례로 block의 메모리 해제
+                int set_num = cache_memory[now_level].set_num;
+                for (int i = 0; i < set_num; i++)
+                {
+			// 맨 앞의 block부터 차례로 메모리 해제
+                        CacheSet* now_set = &cache_memory[now_level].set[i];
+                        int num = now_set->num;
+                        for (char j = 0; j < num; j++)
+                        {
+                                CacheBlock* now_block = now_set->first;
+                                now_set->first = now_block->right;
+                                free(now_block);
+                        }
+                }
 
+                // set의 메모리 해제
+                free(cache_memory[now_level].set);
+        }
+
+        // 모든 cache의 메모리 해제
+        free(cache_memory);
+        return;
+}
+
+// 현재 캐시 메모리의 데이터를 프린트할 함수
+void PrintCache()
+{
+        printf("\n");
+        printf("********** Current Cache Status **********\n");
+        printf("\n");
+
+	// 상위 cache memory부터 차례로 출력
+	// now_level: 현재 cache memory의 level
+        for (int now_level = 1; now_level <= level; now_level++)
+        {
+		// 현재 level의 cache 주소를 변수에 담은 후, 메모리의 정보 출력
+		CacheMemory* now_cache = &cache_memory[now_level];
+		printf("        ***** Level %d Cache *****\n", now_level);
+		printf("block size: %d / block num: %d / cache size: %d\n", now_cache->block_size, now_cache->block_num, now_cache->set_num);
+		printf("bit count [tag / index / offset]: %d / %d / %d\n", now_cache->tag_bit, now_cache->index_bit, now_cache->offset_bit);
+		printf("\n");
+
+                // set 0부터 차례로 block의 정보 출력
+		int block_size = now_cache->block_size;
+		int set_num = now_cache->set_num;
+		// index: set index
+                for (int index = 0; index < set_num; index++)
+                {
+			// 현재 set의 주소와 block의 개수를 찾은 후, block의 개수 출력
+			CacheSet* now_set = &now_cache->set[index];
+			int num = now_set->num;
+			printf("Set %d has %d blocks.\n", index, num);
+
+			// 가장 앞의 block부터 차례로 base address와 data 출력
+                        CacheBlock* now_block = now_set->first;
+                        for (char i = 0; i < num; i++)
+                        {
+				printf("block %d\n", i);
+				printf("base address: %x / data: ", (now_block->tag << (now_cache->index_bit + now_cache->offset_bit)) + (index << (now_cache->offset_bit)));
+				for (int j = 0; j < block_size; j++) printf("%3x ", now_block->data[j]);
+				printf("\n");
+                                now_block = now_block->right;
+                        }
+
+			printf("\n");
+                }
+		
+		// 마지막으로 현재 level cache의 access 정보 출력
+		printf("access count: %d / hit count: %d / miss count : %d\n", now_cache->access_count, now_cache->hit_count, now_cache->miss_count);
+        	printf("\n");
+        	printf("******************************************\n");
+        	printf("\n");
+        }
+}
+
+// 메모리를 읽고 출력할 함수
+// level 1 cache memory에서 읽어오기. data의 size가 너무 크다면 여러번 접근해 읽어오기.
+int Read(Address address, int size)
+{
+	// 유효한 주소로의 접근인지 확인
+	// size가 2의 제곱수가 아니라면 잘못된 접근
+	// address가 size의 배수가 아니라면 잘못된 접근
+	for (int i = size; i > 1; i /= 2)
+        {
+		if (i % 2 == 1)
+		{
+			printf("Wrong data size!\n");
+			return -1;
+		}
+	}
+	if (address % size)
+	{
+		printf("Wrong address!\n");
+		return -1;
+	}
+       
+	int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
+	int access_num = (size / block_size) + (size % block_size > 0);  // 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
+	int base_offset = (address / block_size);  // block에서 data를 출력할 때 사용할 base offset (data size가 block size 이상일 때에는 0, 아닐 때에는 address의 뒤 몇자리.)
+	
+	// 접근할 data의 size가 block size보다 작다면, 한 번의 접근으로 출력.
+        // 접근할 data의 size가 block size보다 크다면, address에 block size를 계속 더해가며 cache에 접근.
+	CacheBlock* block;  // cache에 접근해 가져온 block의 주소
+	for (int i = 0; i < access_num; i++)
+	{
+		block = CacheAccess(address);
+		for (int j = 0; j < size; j++)
+		{
+			printf("%3x ", block->data[base_offset + j]);
+			if (base_offset + j == block_size) break;  // 현재 block에서 마지막 data에 도달했을 때, 다음 block으로 이동하기 위해 break
+		}
+		address += block_size;
+	}
+
+	printf("\n");
+	return 0;
+}
+
+// 주어진 address를 이용해 cache 메모리에 접근한 후, cache block의 주소를 반환할 함수.
+CacheBlock* CacheAccess(Address address, int level)
+{
         // 주어진 address에서 index와 tag 구하기.
         unsigned char index = GetIndex(address), tag = GetTag(address);
 
@@ -325,6 +452,7 @@ CacheBlock* CacheAccess(Address address, int size)
 	return new_block;
 }
 
+/*
 // 주어진 address를 이용해 새로운 cache block를 만들 함수
 CacheBlock* MakeBlock(Address address)
 {
@@ -348,65 +476,20 @@ void FreeBlock(CacheBlock* temp_block, unsigned char index)
 	}
 	free(temp_block);
 }
+*/
 
 // 주어진 address로 cache memory에서의 set index를 찾을 hash function.
-unsigned char GetIndex(Address address)
+unsigned short GetIndex(Address address, int level)
 {
-        return (address >> 2) & 0x03;
+	int tag_bit = cache_memory[level].tag_bit;
+	int offset_bit = cache_memory[level].offset_bit;
+        return (address << tag_bit) >> (tag_bit + offset_bit);
 }
 
 // 주어진 address로 tag를 찾을 hash function.
-unsigned char GetTag(Address address)
+unsigned short GetTag(Address address, int level)
 {
-        return (address >> 4) & 0xf;
+	int index_bit = cache_memory[level].index_bit;
+	int offset_bit = cache_memory[level].offset_bit;
+        return address >> (index_bit + offset_bit);
 }
-
-// 현재 캐시 메모리의 데이터를 프린트할 함수
-void PrintCache()
-{
-	printf("\n");
-	printf("***** Current Cache Status *****\n");
-	printf("\n");
-
-	// 각 set의 block의 개수를 출력 후, 블럭의 원소를 하나하나 프린트하기
-	for (int i = 0; i < 4; i++)
-        {
-                char num = cache_memory[i].num;
-		printf("Set %d has %d blocks.\n", i, num);
-
-		CacheBlock* now_block = cache_memory[i].first;	
-                for (char j = 0; j < num; j++)
-                {
-			printf("dirty:%d / tag:%x / data:%x\n", now_block->dirty, now_block->tag, now_block->data);
-                	now_block = now_block->right;
-                }
-		printf("\n");
-        }
-	
-	printf("access count: %d / hit count: %d / miss count : %d\n", access_count, hit_count, miss_count);
-	printf("\n");
-
-	printf("********************************\n");
-	printf("\n");
-}
-*/
-
-// cache 메모리를 해제할 함수
-void FreeCache(int level)
-{
-	int set_num = cache_memory[level].set_num;
-        for (int i = 0; i < set_num; i++)
-        {
-		CacheSet* now_set = &cache_memory[level].set[i];
-                int num = now_set->num;
-                for (char j = 0; j < num; j++)
-                {
-                        CacheBlock* now_block = now_set->first;
-                        now_set->first = now_block->right;
-                        free(now_block);
-                }
-        }
-
-	free(cache_memory[level].set);
-}
-
