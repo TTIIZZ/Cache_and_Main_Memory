@@ -6,6 +6,7 @@
 // 캐시 메모리 2개와 메인 메모리의 데이터 교환 구현
 
 // 16-bit address를 이용함.
+// big endian 방식을 이용함.
 
 // cache memory의 size는 매 실행마다 입력
 
@@ -59,22 +60,26 @@ int level;
 
 // main memory
 typedef unsigned short Address;
-typedef char* MainMemory;
+typedef unsigned char* MainMemory;
 MainMemory main_memory;
 
 void MakeCache();
 void FreeCache();
 void PrintCache();
 
-int Read(Address address, int size);
+unsigned long long Read(Address address, int size);
 CacheBlock* CacheAccess(Address address, int now_level);
-CacheBlock* MakeBlock(Address address);
+CacheBlock* MakeBlock(Address address, int now_level);
 void FreeBlock(CacheBlock* temp_block, unsigned char index);
 unsigned short GetIndex(Address address, int now_level);
 unsigned short GetTag(Address address, int now_level);
 
 int main(void)
 {
+	// main memory 할당 후 값 초기화
+	main_memory = (unsigned char*)calloc(65536, sizeof(unsigned char));
+	for (int i = 0; i <= 0xffff; i++) main_memory[i] = i % 0x100;
+
 	// 캐시 메모리의 정보 입력 후 메모리 생성 -> 잘못된 사이즈 입력 시 다시 입력
 	while (1)
 	{
@@ -96,52 +101,56 @@ int main(void)
 		}
 		if (!execution) break;
 
-		printf("What is the max level of cache memory?: ");
+		if (isatty(0)) printf("What is the max level of cache memory?: ");
 		scanf("%d", &level);
+		if (isatty(0)) printf("\n");
 		MakeCache();
 
 		char type;
 		int temp_address;
 		Address address;
+		int size;
 	
 		while (1)
 		{
-			printf("Input the access type [R / W / Q]: ");
+			if (isatty(0)) printf("Input the access type [R / W / Q]: ");
 			scanf(" %c", &type);
 			if (type == 'Q' || type == 'q') break;
 
+			if (isatty(0)) printf("What is the address of data?: ");
 			scanf("%x", &temp_address);
 			address = temp_address & 0xffff;
 
-			printf("tag: %x / index: %x\n", GetTag(address, 1), GetIndex(address, 1));
+			if (isatty(0)) printf("What is the size of data to access?: ");
+			scanf("%d", &size);
 			
-			/*
 			switch (type)
 			{
 				case 'R': case 'r':
-					Read(address, 4);
+					printf("data: %llx\n", Read(address, size));
 					break;
 
-				
+				/*
 				case 'W': case 'w':
 					Write(address, 4);
 					break;
-				
+				*/
 
 				default:
-					printf("유효하지 않은 입력입니다.\n");
+					printf("Wrong input!\n");
 				
 			}
-			*/
+
+			printf("\n");
 		}
 
 		PrintCache();
 
-		// 캐시 메모리와 메인 메모리 해제
+		// 캐시 메모리와 해제
 		FreeCache();
-		//free(main_memory);
-
 	}
+
+	free(main_memory);
 
 	return 0;
 }
@@ -167,7 +176,7 @@ void MakeCache()
                 while (1)
 		{
 			// level에 따라 만들 캐시메모리 결정
-			printf("Let's make a level %d cache memory!\n", now_level);
+			if (isatty(0)) printf("Let's make a level %d cache memory!\n", now_level);
 
 			// block size 입력 후 확인 (offset bit의 수 구하기)
 			if (isatty(0)) printf("Please input the size of cache block: ");
@@ -242,10 +251,8 @@ void MakeCache()
 
 		// 모두 가능한 입력임을 확인했으므로 현재 cache memory에 set의 메모리 선언
 		now_cache->set = (CacheSet*)calloc(now_cache->set_num, sizeof(CacheSet));
-
-		printf("%d %d %d\n", now_cache->block_size, now_cache->block_num, now_cache->set_num);
-		printf("%d %d %d\n", now_cache->tag_bit, now_cache->index_bit, now_cache->offset_bit);
-		printf("\n");
+		
+		if (isatty(0)) printf("\n");
 	}
 
 	return;
@@ -270,6 +277,7 @@ void FreeCache()
                         {
                                 CacheBlock* now_block = now_set->first;
                                 now_set->first = now_block->right;
+				free(now_block->data);
                                 free(now_block);
                         }
                 }
@@ -297,7 +305,7 @@ void PrintCache()
 		// 현재 level의 cache 주소를 변수에 담은 후, 메모리의 정보 출력
 		CacheMemory* now_cache = &cache_memory[now_level];
 		printf("        ***** Level %d Cache *****\n", now_level);
-		printf("block size: %d / block num: %d / cache size: %d\n", now_cache->block_size, now_cache->block_num, now_cache->set_num);
+		printf("block size: %d / block num: %d / set num: %d\n", now_cache->block_size, now_cache->block_num, now_cache->set_num);
 		printf("bit count [tag / index / offset]: %d / %d / %d\n", now_cache->tag_bit, now_cache->index_bit, now_cache->offset_bit);
 		printf("\n");
 
@@ -334,60 +342,88 @@ void PrintCache()
         }
 }
 
-// 메모리를 읽고 출력할 함수
+// 메모리를 읽고 리턴할 함수
+// address: 접근할 데이터의 주소, size: 읽을 데이터의 크기
 // level 1 cache memory에서 읽어오기. data의 size가 너무 크다면 여러번 접근해 읽어오기.
-int Read(Address address, int size)
+// 읽어온 데이터들을 1byte씩 왼쪽으로 밀면서 리턴값에 더하기.
+unsigned long long Read(Address address, int size)
 {
 	// 유효한 주소로의 접근인지 확인
-	// size가 2의 제곱수가 아니라면 잘못된 접근
-	// address가 size의 배수가 아니라면 잘못된 접근
+	// size가 1~8이 아니거나 2의 제곱수(1 포함)가 아니라면 잘못된 접근
+	// address가 size의 배수가 아니거나, 해당 address에 접근 시 main memory를 벗어나면 잘못된 접근
+	 if (size < 1 || size > 8)
+        {
+                printf("Wrong data size!\n");
+                return 0;
+        }
 	for (int i = size; i > 1; i /= 2)
         {
 		if (i % 2 == 1)
 		{
 			printf("Wrong data size!\n");
-			return -1;
+			return 0;
 		}
 	}
-	if (address % size)
+	if (address % size || (address > (0xffff - (size - 1))))
 	{
 		printf("Wrong address!\n");
-		return -1;
+		return 0;
 	}
+
+	// 리턴값: 0으로 초기화
+	unsigned long long ret = 0;
        
 	int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
-	int access_num = (size / block_size) + (size % block_size > 0);  // 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
-	int base_offset = (address / block_size);  // block에서 data를 출력할 때 사용할 base offset (data size가 block size 이상일 때에는 0, 아닐 때에는 address의 뒤 몇자리.)
-	
-	// 접근할 data의 size가 block size보다 작다면, 한 번의 접근으로 출력.
+	int access_num = (size / block_size) + (size % block_size > 0);  // 캐시 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
+	int base_offset = (address % block_size);  // block에서 data를 출력할 때 사용할 base offset (data size가 block size 이상일 때에는 0, 아닐 때에는 address의 뒤 몇자리.)
+
+	// 접근할 data의 size가 block size보다 작다면, 한 번만 접근.
         // 접근할 data의 size가 block size보다 크다면, address에 block size를 계속 더해가며 cache에 접근.
 	CacheBlock* block;  // cache에 접근해 가져온 block의 주소
 	for (int i = 0; i < access_num; i++)
 	{
-		//block = CacheAccess(address, 1);
+		// size만큼 데이터 가져오기
+		block = CacheAccess(address, 1);  // 데이터를 가져올 block
 		for (int j = 0; j < size; j++)
 		{
-			printf("%3x ", block->data[base_offset + j]);
-			if (base_offset + j == block_size) break;  // 현재 block에서 마지막 data에 도달했을 때, 다음 block으로 이동하기 위해 break
+			// 데이터 복사
+			// 블럭의 마지막 data에 도달한 경우
+			//   - j를 0으로 초기화: 다음 블럭의 첫 data부터 복사하기 위함.
+			//   - size에서 block size를 차감: 복사한 만큼 차감
+			//   - 이 동작은 블럭을 2개 이상 가져와야 할 때 유효함 (블럭을 2개 이상 필요로 하는 경우, 처음부터 base address가 0이므로 초기화 필요 X)
+			if (base_offset + j == block_size)
+			{
+				j = 0;
+				size -= block_size;
+				break;  // 현재 block에서 마지막 data에 도달했을 때, 다음 block으로 이동하기 위해 break
+			}
+			ret += block->data[base_offset + j];
+			if (j < size - 1) ret <<= 8;  // 가장 주소가 작은 곳의 data가 msb쪽에 위치함. (big endian).
 		}
 		address += block_size;
 	}
 
-	printf("\n");
-	return 0;
+	return ret;
 }
-/*
+
 // 주어진 address를 이용해 cache 메모리에 접근한 후, cache block의 주소를 반환할 함수.
+// address: 데이터의 주소, now_level: cache memory의 level
+// tag와 index를 구한 후, set의 첫 block부터 tag를 비교하며 같은지 확인
+// 같은 tag를 발견했다면 해당 block을 맨 앞으로 옮긴 후 리턴
+// 같은 tag를 발견하지 못했다면 구하려는 주소의 data를 갖는 block을 만들어서 맨 앞에 연결 후 리턴
 CacheBlock* CacheAccess(Address address, int now_level)
 {
-        // 주어진 address에서 index와 tag 구하기.
-        unsigned char index = GetIndex(address), tag = GetTag(address);
+	// 현재 level에서의 cache memory 주소와, index, tag
+	CacheMemory* now_cache = &cache_memory[now_level];
+        Address index = GetIndex(address, now_level), tag = GetTag(address, now_level);
+	now_cache->access_count++;
 
-        // 해당하는 set에서의 block의 개수와, 목표로 하는 block
-        char num = cache_memory[index].num;
-        CacheBlock* ret_block = cache_memory[index].first;
+        // 해당하는 set과 block의 개수
+	CacheSet* now_set = &now_cache->set[index];
+        int num = now_set->num;
 
-        // 확인 후 다음
+	CacheBlock* ret_block = now_set->first;  // 최종적으로 반환할 블럭
+        // 확인 후 다음 블럭
         // 마지막 블럭까지 이동 (마지막 블럭의 확인은 X)
         for (int i = 0; i < num - 1; i++)
         {
@@ -395,25 +431,26 @@ CacheBlock* CacheAccess(Address address, int now_level)
 		ret_block = ret_block->right;
         }
 
+	
         // 블럭이 하나도 없는 경우 -> 새로 만들어서 set에 연결하기
         if (!ret_block)
         {
-		miss_count++;
+		now_cache->miss_count++;
 
-                ret_block = MakeBlock(address);
-                cache_memory[index].first = ret_block;
-		cache_memory[index].last = ret_block;
-		cache_memory[index].num++;
+                ret_block = MakeBlock(address, now_level);
+                now_set->first = ret_block;
+		now_set->last = ret_block;
+		now_set->num++;
 
                 return ret_block;
         }
-
+	
 	// 블럭이 존재하는 경우
 
 	// 태그가 일치하면 해당하는 블럭을 맨 앞으로 이동 후 리턴
 	if (ret_block->tag == tag)
 	{
-		hit_count++;
+		now_cache->hit_count++;
 
 		// 이미 맨 앞에 있는 경우 바로 리턴
 		if (!ret_block->left) return ret_block;
@@ -423,48 +460,71 @@ CacheBlock* CacheAccess(Address address, int now_level)
 		if (ret_block->right) ret_block->right->left = ret_block->left;  // 뒤 블럭이 있는 경우에만
 		
 		// 맨 앞으로 이동
-		if (!ret_block->right) cache_memory[index].last = ret_block->left;  // 태그가 일치하는 블럭이 맨 마지막 블럭이었을 경우, last를 앞의 블럭으로 갱신
+		if (!ret_block->right) now_set->last = ret_block->left;  // 태그가 일치하는 블럭이 맨 마지막 블럭이었을 경우, last를 앞의 블럭으로 갱신
 		ret_block->left = NULL;
-		ret_block->right = cache_memory[index].first;
+		ret_block->right = now_set->first;
 		ret_block->right->left = ret_block;
-		cache_memory[index].first = ret_block;
+		now_set->first = ret_block;
 
 		return ret_block;
 	}
 
-	miss_count++;
+	now_cache->miss_count++;
 	
 	// 태그가 일치하지 않으면 새로운 데이터 가져온 후 맨 앞에 연결
-	// 원래 개수가 3개 이하였다면 num을 1 늘리고, 4개였다면 맨 마지막 블럭 제거
-	CacheBlock* new_block = MakeBlock(address);
-	new_block->right = cache_memory[index].first;
+	// set이 꽉 차지 않았다면 num을 1 늘리고, 꽉 찼다면 맨 마지막 블럭 제거
+	CacheBlock* new_block = MakeBlock(address, now_level);
+	new_block->right = now_set->first;
 	new_block->right->left = new_block;
-	cache_memory[index].first = new_block;
+	now_set->first = new_block;
 
-	if (cache_memory[index].num == 4)
+	if (now_set->num == now_cache->block_num)
 	{
 		ret_block->left->right = NULL;
-		cache_memory[index].last = ret_block->left;
-		FreeBlock(ret_block, index);
+		now_set->last = ret_block->left;
+		free(ret_block->data);  // FreeBlock 함수 만든 후 교체
+		free(ret_block);  // FreeBlock 함수 만든 후 교체
 	}
-	else cache_memory[index].num++;
+	else now_set->num++;
 
 	return new_block;
 }
-*/
-/*
-// 주어진 address를 이용해 새로운 cache block를 만들 함수
-CacheBlock* MakeBlock(Address address)
-{
-        CacheBlock* new_block = (CacheBlock*)calloc(1, sizeof(CacheBlock));
-        new_block->tag = GetTag(address);
 
-        Address base_address = address & 0xfc;
-	for (int i = 0; i < 4; i++) new_block->data += main_memory[base_address + i] << (24 - 8 * i);
+// 주어진 address를 이용해 새로운 cache block를 만들 함수
+// address: 접근할 데이터의 주소, now_level: cache memory의 level
+CacheBlock* MakeBlock(Address address, int now_level)
+{
+	// 현재 레벨의 cache memory와, block data에 관한 정보들
+	CacheMemory* now_cache = &cache_memory[now_level];
+	int block_size = now_cache->block_size;
+	int offset_bit = now_cache->offset_bit;
+	Address base_address = (address >> offset_bit) << offset_bit;
+
+	// 새롭게 만들 block (tag 갱신, data를 담을 메모리 할당)
+	CacheBlock* new_block = (CacheBlock*)calloc(1, sizeof(CacheBlock));
+        new_block->tag = GetTag(address, now_level);
+	new_block->data = (unsigned char*)calloc(block_size, sizeof(unsigned char));
+
+	// 최하위 cache memory가 아닌 경우
+	// 한 단계 아래의 cache에서 데이터를 찾은 후, data 복사
+	if (now_level < level)
+	{
+		CacheBlock* lower_block = CacheAccess(address, now_level + 1);
+		int base_offset = base_address % (now_cache + 1)->block_size;
+		for (int i = 0; i < block_size; i++) new_block->data[i] = lower_block->data[base_offset + i];
+	}
+
+	// 최하위 cache memory인 경우
+	// main memory에서 data 복사
+	else
+	{
+		for (int i = 0; i < block_size; i++) new_block->data[i] = main_memory[base_address + i];
+	}
 
         return new_block;
 }
 
+/*
 // 블럭의 메모리를 해제할 함수 (evict)
 void FreeBlock(CacheBlock* temp_block, unsigned char index)
 {
@@ -487,7 +547,7 @@ unsigned short GetIndex(Address address, int now_level)
 	Address filter = 0;
 	for (int i = 0; i < index_bit; i++)
 	{
-		filter <<= filter;
+		filter <<= 1;
 		filter += 1;
 	}
 
