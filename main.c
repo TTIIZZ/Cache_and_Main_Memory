@@ -71,7 +71,7 @@ unsigned long long Read(Address address, int size);
 int Write(Address address, int size, unsigned long long data);
 CacheBlock* CacheAccess(Address address, int now_level);
 CacheBlock* MakeBlock(Address address, int now_level);
-void FreeBlock(CacheBlock* temp_block, unsigned char index);
+void FreeBlock(CacheBlock* upper_block, Address address, int now_level);
 unsigned short GetIndex(Address address, int now_level);
 unsigned short GetTag(Address address, int now_level);
 
@@ -140,8 +140,7 @@ int main(void)
 					break;
 
 				default:
-					printf("Wrong input!\n");
-				
+					printf("Wrong input!\n");	
 			}
 
 			printf("\n");
@@ -328,7 +327,7 @@ void PrintCache()
                         for (char i = 0; i < num; i++)
                         {
 				printf("block %d\n", i);
-				printf("base address: %x / data: ", (now_block->tag << (now_cache->index_bit + now_cache->offset_bit)) + (index << (now_cache->offset_bit)));
+				printf("base address: %x / dirty: %x / data: ", ((now_block->tag << (now_cache->index_bit + now_cache->offset_bit)) + (index << (now_cache->offset_bit))), now_block->dirty);
 				for (int j = 0; j < block_size; j++) printf("%3x ", now_block->data[j]);
 				printf("\n");
                                 now_block = now_block->right;
@@ -443,7 +442,9 @@ int Write(Address address, int size, unsigned long long data)
 	address += block_size * (access_num - 1);  // 맨 뒤 block부터 가져오기
         for (int i = access_num - 1; i >= 0; i--)
         {
-                block = CacheAccess(address, 1);  // 데이터를 입력할 block
+		// data를 입력할 block을 가져온 후 dirty bit에 1 대입
+                block = CacheAccess(address, 1);
+		block->dirty = 1;
                 for (int j = size - 1; j >= 0; j--)
                 {
 			// j가 block size를 넘어갔을 때 블럭에 맞춰 넣기 (예: 전체 8칸 중에서 뒤 4칸만 접근하도록 조정)
@@ -488,9 +489,6 @@ CacheBlock* CacheAccess(Address address, int now_level)
                 if (ret_block->tag == tag) break;
 		ret_block = ret_block->right;
         }
-
-	
-
 	
         // 블럭이 하나도 없는 경우 -> 새로 만들어서 set에 연결하기
         if (!ret_block)
@@ -542,8 +540,9 @@ CacheBlock* CacheAccess(Address address, int now_level)
 	{
 		ret_block->left->right = NULL;
 		now_set->last = ret_block->left;
-		free(ret_block->data);  // FreeBlock 함수 만든 후 교체
-		free(ret_block);  // FreeBlock 함수 만든 후 교체
+
+		Address temp_address = (ret_block->tag << (16 - now_cache->tag_bit)) + (index << (now_cache->offset_bit));
+		FreeBlock(ret_block, temp_address, now_level);
 	}
 	else now_set->num++;
 
@@ -584,19 +583,59 @@ CacheBlock* MakeBlock(Address address, int now_level)
         return new_block;
 }
 
-/*
 // 블럭의 메모리를 해제할 함수 (evict)
-void FreeBlock(CacheBlock* temp_block, unsigned char index)
+void FreeBlock(CacheBlock* upper_block, Address address, int now_level)
 {
-	// dirty bit가 1인 경우 데이터를 메인 메모리에 덮어쓰기
-	if (temp_block->dirty)
+	// dirty bit가 1인 경우 데이터를 하위 메모리에 덮어쓰기
+	// 같은 address의 block을 가진 하위 메모리 중 가장 상위 메모리에만 덮어쓰기
+	// 캐시 메모리에 데이터가 없을 때에는 메인 메모리에 덮어쓰기
+	if (upper_block->dirty)
 	{
-		Address base_address = (temp_block->tag << 4) + (index << 2);
-		for (int i = 0; i < 4; i++) main_memory[base_address + i] = (temp_block->data >> (24 - 8 * i)) & 0xff;
+		// 하위 block에 데이터를 옮기기 위한 값 가져오기
+		int offset_bit = cache_memory[now_level].offset_bit;
+		int upper_size = cache_memory[now_level].block_size;
+		Address base_address = (address >> offset_bit) << offset_bit;
+
+		// 하위의 모든 cache memory 살펴보기
+		for (int i = now_level + 1; i <= level; i++)
+		{
+			// 해당 하위 cache에서 block을 찾기 위한 정보
+			Address tag = GetTag(address, i), index = GetIndex(address, i);
+			CacheSet* now_set = &cache_memory[i].set[index];
+
+			// 첫 번째 block부터 시작, 같은 tag의 block이 나올 때까지 이동
+			CacheBlock* lower_block = now_set->first;
+			int num = now_set->num;
+			for (int j = 0; j < num - 1; j++)
+			{
+				if (lower_block->tag == tag) break;
+				lower_block = lower_block->right;
+			}
+
+			// tag가 같은 block이 있다면 data 복사 후 메모리 해제
+			if (lower_block && (lower_block->tag == tag))
+			{
+				lower_block->dirty = 1;  // dirty bit를 1로 갱신
+
+				// base offset을 찾은 후, data를 갱신하기
+				Address base_offset = base_address % cache_memory[i].block_size;
+				for (int j = 0; j < upper_size; j++) lower_block->data[base_offset + j] = upper_block->data[j];
+				
+				free(upper_block->data);
+				free(upper_block);
+				return;
+			}
+		}
+
+		// 하위 cache memory에서 같은 주소의 block을 발견하지 못했을 때는 main memory에 복사
+		for (int i = 0; i < upper_size; i++) main_memory[upper_size + i] = upper_block->data[i];
 	}
-	free(temp_block);
+
+	// 메모리 해제 후 종료
+	free(upper_block->data);
+	free(upper_block);
+	return;
 }
-*/
 
 // 주어진 address로 cache memory에서의 set index를 찾을 hash function.
 unsigned short GetIndex(Address address, int now_level)
