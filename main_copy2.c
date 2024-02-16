@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 
 // **************************************************************************
 // 캐시 메모리 2개와 메인 메모리의 데이터 교환 구현
@@ -16,6 +17,8 @@
 // 메인 메모리의 크기는 64MB. (16-bit address -> (2^16)B = (2^6 * 2 ^10)B = 64MB = 65536B)
 // **************************************************************************
 
+typedef unsigned short Address;  // 16bit address
+
 // cache block
 // valid: double linked list를 이용하기 때문에 필요 없음.
 // dirty: 기존 의미와 같음.
@@ -24,7 +27,7 @@
 typedef struct CacheBlock
 {
 	unsigned char dirty : 1;
-	unsigned short tag;
+	Address tag;
 	unsigned char* data;
 
 	struct CacheBlock* left;
@@ -39,7 +42,6 @@ typedef struct CacheSet
 {
 	int num;
 	struct CacheBlock* first;
-	struct CacheBlock* last;
 } CacheSet;
 
 // cache memory의 정보
@@ -59,27 +61,49 @@ CacheMemory* cache_memory;
 int level;
 
 // main memory
-typedef unsigned short Address;
 typedef unsigned char* MainMemory;
 MainMemory main_memory;
+
+// hash table의 정보
+typedef struct HashSlot
+{
+	char name[20];
+	Address address;
+
+	struct HashSlot* left;
+	struct HashSlot* right;
+} HashSlot;
+
+typedef HashSlot* HashBucket;
+typedef HashBucket* HashTable;
+
+HashTable hash_table;
 
 void MakeCache();
 void FreeCache();
 void PrintCache();
 
-unsigned long long Read(Address address, int size);
-int Write(Address address, int size, unsigned long long data);
-CacheBlock* CacheAccess(Address address, int now_level);
+unsigned long long Read(char* name);
+int Write(char* name, unsigned long long data);
+CacheBlock* AccessCache(Address address, int now_level);
 CacheBlock* MakeBlock(Address address, int now_level);
-void FreeBlock(CacheBlock* upper_block, Address address, int now_level);
-unsigned short GetIndex(Address address, int now_level);
-unsigned short GetTag(Address address, int now_level);
+void FreeBlock(CacheBlock* upper_block, Address index, int now_level);
+Address GetIndex(Address address, int now_level);
+Address GetTag(Address address, int now_level);
+
+Address GetAddress(char* name, int* size);
+void MakeHashTable();
+void FreeHashTable();
+void PrintHashTable();
+int Calloc(char* name, int num, int size);
+int PushSlot(char* name, Address address);
+int Free(char* name);
+int HashFunction(char* name);
 
 int main(void)
 {
 	// main memory 할당 후 값 초기화
 	main_memory = (unsigned char*)calloc(65536, sizeof(unsigned char));
-	for (int i = 0; i <= 0xffff; i++) main_memory[i] = i % 0x100;
 
 	// 캐시 메모리의 정보 입력 후 메모리 생성 -> 잘못된 사이즈 입력 시 다시 입력
 	while (1)
@@ -102,41 +126,56 @@ int main(void)
 		}
 		if (!execution) break;
 
-		if (isatty(0)) printf("What is the max level of cache memory?: ");
-		scanf("%d", &level);
-		if (isatty(0)) printf("\n");
 		MakeCache();
+		MakeHashTable();
 
 		char type;
 		int temp_address;
 		Address address;
 		int size;
 		unsigned long long data;
+		char name[20];
+		int length;
+		int num;
 	
 		while (1)
 		{
-			if (isatty(0)) printf("Input the access type [R / W / Q]: ");
+			if (isatty(0)) printf("Input the access type [A / F / R / W / Q]: ");
 			scanf(" %c", &type);
 			if (type == 'Q' || type == 'q') break;
 
-			if (isatty(0)) printf("What is the address of data?: ");
-			scanf("%x", &temp_address);
-			address = temp_address & 0xffff;
-
-			if (isatty(0)) printf("What is the size of data to access?: ");
-			scanf("%d", &size);
-			
 			switch (type)
 			{
-				case 'R': case 'r':
-					printf("data: %llx\n", Read(address, size));
+				case 'A': case 'a': case 'F': case 'f':
+					if (isatty(0)) printf("Input the name of array [maximum length 10]: ");
+					scanf("%s", name);
+					if (type == 'F' || type == 'f')
+					{
+						Free(name);
+						break;
+					}
+
+					printf("Input the number of elements: ");
+					scanf("%d", &num);
+					printf("Input the size of one element: ");
+					scanf("%d", &size);
+					Calloc(name, num, size);
 					break;
 
-				case 'W': case 'w':
+				case 'R': case 'r': case 'W': case 'w':
+					if (isatty(0)) printf("What element do you want?: ");
+                        		scanf("%s", name);
+
+					if (type == 'R' || type == 'r')
+					{
+						printf("data: %llx\n", Read(name));
+						break;
+					}
+					
 					printf("What is the data to save?: ");
 					scanf("%llx", &data);
 
-					Write(address, size, data);
+					Write(name, data);
 					break;
 
 				default:
@@ -146,10 +185,13 @@ int main(void)
 			printf("\n");
 		}
 
+		// cache와 hash table의 정보 출력
 		PrintCache();
+		PrintHashTable();
 
-		// 캐시 메모리와 해제
+		// cache와 hash table의 메모리 해제
 		FreeCache();
+		FreeHashTable();
 	}
 
 	free(main_memory);
@@ -164,6 +206,10 @@ int main(void)
 // 총 캐시 사이즈를 구했을 때 상위 메모리보다 크고, 메인메모리보다 작은지 확인
 void MakeCache()
 {
+	if (isatty(0)) printf("What is the max level of cache memory?: ");
+        scanf("%d", &level);
+        if (isatty(0)) printf("\n");
+	
 	// 모든 cache memory를 담을 배열 선언
 	cache_memory = (CacheMemory*)calloc(level + 1, sizeof(CacheMemory));
 	
@@ -270,7 +316,7 @@ void FreeCache()
         {
                 // set 개수를 구한 후 set 0부터 차례로 block의 메모리 해제
                 int set_num = cache_memory[now_level].set_num;
-                for (int i = 0; i < set_num; i++)
+                for (Address i = 0; i < set_num; i++)
                 {
 			// 맨 앞의 block부터 차례로 메모리 해제
                         CacheSet* now_set = &cache_memory[now_level].set[i];
@@ -279,8 +325,7 @@ void FreeCache()
                         {
                                 CacheBlock* now_block = now_set->first;
                                 now_set->first = now_block->right;
-				free(now_block->data);
-                                free(now_block);
+				FreeBlock(now_block, i, now_level);
                         }
                 }
 
@@ -315,7 +360,7 @@ void PrintCache()
 		int block_size = now_cache->block_size;
 		int set_num = now_cache->set_num;
 		// index: set index
-                for (int index = 0; index < set_num; index++)
+                for (Address index = 0; index < set_num; index++)
                 {
 			// 현재 set의 주소와 block의 개수를 찾은 후, block의 개수 출력
 			CacheSet* now_set = &now_cache->set[index];
@@ -348,29 +393,11 @@ void PrintCache()
 // address: 접근할 데이터의 주소, size: 읽을 데이터의 크기
 // level 1 cache memory에서 읽어오기. data의 size가 너무 크다면 여러번 접근해 읽어오기.
 // 읽어온 데이터들을 1byte씩 왼쪽으로 밀면서 리턴값에 더하기.
-unsigned long long Read(Address address, int size)
+unsigned long long Read(char* name)
 {
-	// 유효한 주소로의 접근인지 확인
-	// size가 1~8이 아니거나 2의 제곱수(1 포함)가 아니라면 잘못된 접근
-	// address가 size의 배수가 아니거나, 해당 address에 접근 시 main memory를 벗어나면 잘못된 접근
-	 if (size < 1 || size > 8)
-        {
-                printf("Wrong data size!\n");
-                return 0;
-        }
-	for (int i = size; i > 1; i /= 2)
-        {
-		if (i % 2 == 1)
-		{
-			printf("Wrong data size!\n");
-			return 0;
-		}
-	}
-	if (address % size || (address > (0xffff - (size - 1))))
-	{
-		printf("Wrong address!\n");
-		return 0;
-	}
+	int size;
+	Address address = GetAddress(name, &size);
+	if (!address) return 0;
 
 	// 리턴값: 0으로 초기화
 	unsigned long long ret = 0;
@@ -385,7 +412,7 @@ unsigned long long Read(Address address, int size)
 	for (int i = 0; i < access_num; i++)
 	{
 		// size만큼 데이터 가져오기
-		block = CacheAccess(address, 1);  // 데이터를 가져올 block
+		block = AccessCache(address, 1);  // 데이터를 가져올 block
 		for (int j = 0; j < size; j++)
 		{
 			// 데이터 복사
@@ -407,29 +434,11 @@ unsigned long long Read(Address address, int size)
 	return ret;
 }
 
-int Write(Address address, int size, unsigned long long data)
+int Write(char* name, unsigned long long data)
 {
-	// 유효한 주소로의 접근인지 확인
-        // size가 1~8이 아니거나 2의 제곱수(1 포함)가 아니라면 잘못된 접근
-        // address가 size의 배수가 아니거나, 해당 address에 접근 시 main memory를 벗어나면 잘못된 접근
-         if (size < 1 || size > 8)
-        {
-                printf("Wrong data size!\n");
-                return -1;
-        }
-        for (int i = size; i > 1; i /= 2)
-        {
-                if (i % 2 == 1)
-                {
-                        printf("Wrong data size!\n");
-                        return -1;
-                }
-        }
-        if (address % size || (address > (0xffff - (size - 1))))
-        {
-                printf("Wrong address!\n");
-                return -1;
-        }
+	int size;
+        Address address = GetAddress(name, &size);
+        if (!address) return 0;
 
         int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
         int access_num = (size / block_size) + (size % block_size > 0);  // 캐시 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
@@ -443,7 +452,7 @@ int Write(Address address, int size, unsigned long long data)
         for (int i = access_num - 1; i >= 0; i--)
         {
 		// data를 입력할 block을 가져온 후 dirty bit에 1 대입
-                block = CacheAccess(address, 1);
+                block = AccessCache(address, 1);
 		block->dirty = 1;
                 for (int j = size - 1; j >= 0; j--)
                 {
@@ -470,7 +479,7 @@ int Write(Address address, int size, unsigned long long data)
 // tag와 index를 구한 후, set의 첫 block부터 tag를 비교하며 같은지 확인
 // 같은 tag를 발견했다면 해당 block을 맨 앞으로 옮긴 후 리턴
 // 같은 tag를 발견하지 못했다면 구하려는 주소의 data를 갖는 block을 만들어서 맨 앞에 연결 후 리턴
-CacheBlock* CacheAccess(Address address, int now_level)
+CacheBlock* AccessCache(Address address, int now_level)
 {
 	// 현재 level에서의 cache memory 주소와, index, tag
 	CacheMemory* now_cache = &cache_memory[now_level];
@@ -497,7 +506,6 @@ CacheBlock* CacheAccess(Address address, int now_level)
 
                 ret_block = MakeBlock(address, now_level);
                 now_set->first = ret_block;
-		now_set->last = ret_block;
 		now_set->num++;
 
                 return ret_block;
@@ -518,7 +526,6 @@ CacheBlock* CacheAccess(Address address, int now_level)
 		if (ret_block->right) ret_block->right->left = ret_block->left;  // 뒤 블럭이 있는 경우에만
 		
 		// 맨 앞으로 이동
-		if (!ret_block->right) now_set->last = ret_block->left;  // 태그가 일치하는 블럭이 맨 마지막 블럭이었을 경우, last를 앞의 블럭으로 갱신
 		ret_block->left = NULL;
 		ret_block->right = now_set->first;
 		ret_block->right->left = ret_block;
@@ -539,10 +546,7 @@ CacheBlock* CacheAccess(Address address, int now_level)
 	if (now_set->num == now_cache->block_num)
 	{
 		ret_block->left->right = NULL;
-		now_set->last = ret_block->left;
-
-		Address temp_address = (ret_block->tag << (16 - now_cache->tag_bit)) + (index << (now_cache->offset_bit));
-		FreeBlock(ret_block, temp_address, now_level);
+		FreeBlock(ret_block, index, now_level);
 	}
 	else now_set->num++;
 
@@ -568,7 +572,7 @@ CacheBlock* MakeBlock(Address address, int now_level)
 	// 한 단계 아래의 cache에서 데이터를 찾은 후, data 복사
 	if (now_level < level)
 	{
-		CacheBlock* lower_block = CacheAccess(address, now_level + 1);
+		CacheBlock* lower_block = AccessCache(address, now_level + 1);
 		int base_offset = base_address % (now_cache + 1)->block_size;
 		for (int i = 0; i < block_size; i++) new_block->data[i] = lower_block->data[base_offset + i];
 	}
@@ -584,7 +588,7 @@ CacheBlock* MakeBlock(Address address, int now_level)
 }
 
 // 블럭의 메모리를 해제할 함수 (evict)
-void FreeBlock(CacheBlock* upper_block, Address address, int now_level)
+void FreeBlock(CacheBlock* upper_block, Address index, int now_level)
 {
 	// dirty bit가 1인 경우 데이터를 하위 메모리에 덮어쓰기
 	// 같은 address의 block을 가진 하위 메모리 중 가장 상위 메모리에만 덮어쓰기
@@ -592,15 +596,17 @@ void FreeBlock(CacheBlock* upper_block, Address address, int now_level)
 	if (upper_block->dirty)
 	{
 		// 하위 block에 데이터를 옮기기 위한 값 가져오기
-		int offset_bit = cache_memory[now_level].offset_bit;
-		int upper_size = cache_memory[now_level].block_size;
-		Address base_address = (address >> offset_bit) << offset_bit;
+		CacheMemory* now_cache = &cache_memory[now_level];
+		int tag_bit = now_cache->tag_bit;
+		int offset_bit = now_cache->offset_bit;
+		int upper_size = now_cache->block_size;
+		Address base_address = (upper_block->tag << (16 - tag_bit)) + (index << offset_bit);
 
 		// 하위의 모든 cache memory 살펴보기
 		for (int i = now_level + 1; i <= level; i++)
 		{
 			// 해당 하위 cache에서 block을 찾기 위한 정보
-			Address tag = GetTag(address, i), index = GetIndex(address, i);
+			Address tag = GetTag(base_address, i), index = GetIndex(base_address, i);
 			CacheSet* now_set = &cache_memory[i].set[index];
 
 			// 첫 번째 block부터 시작, 같은 tag의 block이 나올 때까지 이동
@@ -638,7 +644,7 @@ void FreeBlock(CacheBlock* upper_block, Address address, int now_level)
 }
 
 // 주어진 address로 cache memory에서의 set index를 찾을 hash function.
-unsigned short GetIndex(Address address, int now_level)
+Address GetIndex(Address address, int now_level)
 {
 	int index_bit = cache_memory[now_level].index_bit;
 	int offset_bit = cache_memory[now_level].offset_bit;
@@ -654,9 +660,236 @@ unsigned short GetIndex(Address address, int now_level)
 }
 
 // 주어진 address로 tag를 찾을 hash function.
-unsigned short GetTag(Address address, int now_level)
+Address GetTag(Address address, int now_level)
 {
 	int index_bit = cache_memory[now_level].index_bit;
 	int offset_bit = cache_memory[now_level].offset_bit;
 	return address >> (index_bit + offset_bit);
+}
+
+// 배열의 이름을 통해 주소를 얻어낼 함수
+// name: 배열의 이름
+// *size: 원소의 크기
+Address GetAddress(char* name, int* size)
+{
+	// 원소의 주소
+	Address ret_address;
+
+	// 괄호를 통해 배열의 이름과 인덱스를 구분
+	// 맨 뒤에서부터 확인하면서, 닫는 괄호와 여는 괄호에 '\0' 대입
+	// 괄호 안의 문자열을 통해 인덱스를 얻어내기
+	int end;  // 이름이 끝나는 위치
+	int index;  // 원소의 인덱스
+	for (int i = strlen(name); ; i--)
+	{
+		if (name[i] == ']') name[i] = '\0';
+		if (name[i] == '[')
+		{
+			index = atoi(name + i + 1);
+			name[i] = '\0';
+			break;
+		}
+	}
+
+	// 원하는 배열의 정보를 담은 slot 찾기
+	int hash_index = HashFunction(name);
+	HashSlot* ret_slot = hash_table[hash_index];
+	for ( ; ret_slot; ret_slot = ret_slot->right)
+	{
+		if (!strcmp(ret_slot->name, name)) break;
+	}
+	if (!ret_slot) return 0;  // 찾지 못했을 때 리턴 0 (원소의 주소로 0이 나올 수 없음 -> 에러)
+
+	if (ret_slot->left)
+	{
+		ret_slot->left->right = ret_slot->right;
+		if (ret_slot->right) ret_slot->right->left = ret_slot->left;
+
+		ret_slot->left = NULL;
+		ret_slot->right = hash_table[hash_index];
+		hash_table[hash_index] = ret_slot;
+	}
+	if (index >= ((main_memory[ret_slot->address + 1] << 8) + main_memory[ret_slot->address])) return 0;
+
+	*size = main_memory[ret_slot->address] >> 3;
+	if (*size == 1) return ret_slot->address + 3 + index;
+	else return ret_slot->address + 4 + index * (*size);
+}
+
+// hash table에 메모리를 할당할 함수
+void MakeHashTable()
+{
+	hash_table = (HashTable)calloc(10, sizeof(HashBucket));
+	return;
+}
+
+// hash table의 메모리를 해제할 함수
+void FreeHashTable()
+{
+	HashSlot* temp_slot;
+	for (int i = 0; i < 10; i++)
+	{
+		while (hash_table[i])
+		{
+			temp_slot = hash_table[i];
+			hash_table[i] = temp_slot->right;
+			free(temp_slot);
+		}
+	}
+	free(hash_table);
+}
+
+// hash table의 상태를 출력할 함수
+void PrintHashTable()
+{
+	printf("\n");
+        printf("********** Current Hash Table Status **********\n");
+        printf("\n");
+
+        // bucket 0부터 차례로 출력
+        // now_level: 현재 cache memory의 level
+        for (int now_bucket = 0; now_bucket < 10; now_bucket++)
+        {
+                // 현재 level의 cache 주소를 변수에 담은 후, 메모리의 정보 출력
+                printf("***** Bucket %d *****\n", now_bucket);
+                printf("\n");
+
+                // slot 0부터 차례로 정보 출력
+                HashSlot* now_slot = hash_table[now_bucket];
+		for (int i = 0; now_slot; i++, now_slot = now_slot->right)
+                {
+                        printf("Slot %d\n", i);
+			printf("name: %s / address: %x\n", now_slot->name, now_slot->address);
+                }
+
+                printf("\n");
+                printf("*********************\n");
+                printf("\n");
+        }
+
+	printf("***********************************************\n");
+	printf("\n");
+}
+
+// 메모리를 할당할 함수
+// name: 배열의 이름
+// num: 원소의 수
+// size: 원소의 크기
+// 메모리를 앞에서부터 확인.
+//   - 할당할 수 있는 메모리가 나왔을 경우 필요한 크기만큼 할당이 가능한지 확인 후 가능하면 할당
+//   - 이미 할당된 메모리를 발견했을 경우 해당 배열을 건너뛰고 바로 다음 메모리부터 확인
+// 할당할 수 있는 메모리를 찾았다면 해당 메모리 초기화 후 해당 배열의 이름과 시작 주소를 해시 테이블에 저장
+int Calloc(char* name, int num, int size)
+{
+	// 같은 이름의 배열이 이미 존재하면 -1 리턴
+	HashSlot* check_slot = hash_table[HashFunction(name)];
+        for ( ; check_slot; check_slot = check_slot->right)
+        {
+                if (!strcmp(check_slot->name, name)) return -1;
+        }
+
+	// 현재 할당하는 메모리의 정보
+	Address ret_address = 0;  // 배열의 시작 주소
+	Address memory_size = num * size + 3;
+	memory_size = ((memory_size / 4) + (memory_size % 4 > 0)) * 4;  // 배열의 크기 (데이터 외의 정보까지 포함한 크기)
+
+	// 할당할 수 있는 메모리의 주소를 찾을 때까지 반복
+	while (1)
+	{
+		// 할당할 수 있는 메모리가 남아있지 않은 경우
+		if (0xffff - ret_address + 1 < memory_size) return -1;
+
+		// 4B씩 메모리 상태 확인
+		int i;
+		for (i = 0; i < memory_size; i += 4)
+		{
+			// 이미 할당된 메모리 발견 시 해당 배열의 메모리 건너뛰기
+			if (main_memory[ret_address + i] & 0x1)
+			{
+				i = 0;
+                		Address step_size = (main_memory[ret_address + i] >> 3) * ((main_memory[ret_address + i + 1] << 8) + main_memory[ret_address + i + 2]) + 3;
+                		ret_address += ((step_size / 4) + (step_size % 4 > 0)) * 4;
+                		break;
+			}
+		}
+		if (!i) continue;  // 메모리 건너뛰기
+
+		// 필요한 크기의 메모리를 찾은 경우 (i가 0)
+		break;
+	}
+
+	// 배열의 정보를 메모리에 입력
+	main_memory[ret_address] = (size << 3) + 1;  // 원소의 size와, 사용중인 메모리라는 표시
+	main_memory[ret_address + 1] = (num >> 8) & 0xff;  // 원소의 개수
+	main_memory[ret_address + 2] = num & 0xff;  // 원소의 개수
+
+	// data 초기화
+	main_memory[ret_address + 3] = 0;
+	for (int i = 4; i < memory_size; i += 4)
+	{
+		main_memory[ret_address + i] = 0;
+		main_memory[ret_address + i + 1] = 0;
+		main_memory[ret_address + i + 2] = 0;
+		main_memory[ret_address + i + 3] = 0;
+	}
+
+	// 해시 테이블에 추가
+	PushSlot(name, ret_address);
+	return 0;
+}
+
+// hash table에 slot을 추가할 함수 (bucket의 맨 앞에 연결)
+int PushSlot(char* name, Address address)
+{
+	// 새로운 slot에 정보 입력
+	HashSlot* new_slot = (HashSlot*)calloc(1, sizeof(HashSlot));
+	strcpy(new_slot->name, name);
+	new_slot->address = address;
+
+	// bucket의 맨 앞에 연결
+	int hash_index = HashFunction(name);
+	new_slot->right = hash_table[hash_index];
+	if (new_slot->right) new_slot->right->left = new_slot;
+	hash_table[hash_index] = new_slot;
+
+	return 0;
+}
+
+// 메모리를 해제할 함수
+// hash table에서 slot을 찾은 다음, 메모리의 시작 address부터 4B마다 해제 
+int Free(char* name)
+{
+	// 제거할 slot 찾기
+	HashSlot* temp_slot = hash_table[HashFunction(name)];
+	while (temp_slot)
+	{
+		if (!strcmp(temp_slot->name, name)) break;
+	}
+
+	// slot을 찾지 못하면 -1 리턴
+	if (!temp_slot) return -1;
+
+	// 배열의 시작 주소와 메모리의 크기를 찾은 후 4B씩 메모리 해제
+	Address address = temp_slot->address;
+	Address memory_size = (main_memory[address] >> 3) * ((main_memory[address + 1] << 8) + main_memory[address + 2]) + 3;
+        for (int i = 0; i < memory_size; i += 4) main_memory[address + i] = 0;
+
+	// slot을 bucket에서 제거
+	if (temp_slot->left) temp_slot->left->right = temp_slot->right;
+	else hash_table[HashFunction(name)] = temp_slot->right;
+	if (temp_slot->right) temp_slot->right->left = temp_slot->left;
+
+	// slot의 메모리 해제 후 리턴 0
+	free(temp_slot);
+	return 0;
+}
+
+// bucket의 index를 찾을 해시 함수
+// 아스키 넘버를 다 더한 후 일의 자리 리턴
+int HashFunction(char* name)
+{
+	int ret = 0;
+	for (int i = 0; !name[i]; i++) ret += name[i];
+
+	return ret % 10;
 }

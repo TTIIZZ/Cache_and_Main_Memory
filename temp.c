@@ -87,7 +87,7 @@ void MakeArrayTable();
 void FreeArrayTable();
 
 int Calloc(char* name);
-int Realloc(char* name);
+int Realloc(char* name, int num);
 int Free(char* name);
 
 int Read(char* name);
@@ -171,15 +171,14 @@ int main(void)
 					scanf(" %[^\n]s", name);
 
 					if (type == 'N' || type == 'n') Calloc(name);
-					else if (type == 'R' || type == 'r') Realloc(name);
+					//else if (type == 'R' || type == 'r') Realloc(name);
 					else if (type == 'F' || type == 'f') Free(name);
 
 					break;
 
 				case 'R': case 'r': case 'W': case 'w':
-					if ((type == 'R' || type == 'r') && isatty(0)) printf("What array or element do you want?: ");
-					else if (isatty(0)) printf("Input the string that means writing the number into element: ");
-					scanf(" %[^\n]s", name);
+					if (isatty(0)) printf("What array or element do you want?: ");
+                        		scanf("%s", name);
 
 					if (type == 'R' || type == 'r') Read(name);
 					else Write(name);
@@ -561,6 +560,7 @@ int Calloc(char* name)
         return 0;
 }
 
+/*
 // 메모리를 재할당할 함수
 // name: 배열의 이름
 // num: 원소의 개수
@@ -570,7 +570,7 @@ int Calloc(char* name)
 //   - 더 커지는 경우, 이어서 메모리를 선언할 수 있는지 확인
 //     - 가능하다면 메모리 선언 후 리턴
 //     - 불가능하다면 새로운 위치의 메모리를 찾아 할당 (할당할 수 없다면 -1 리턴 -> 실패)
-int Realloc(char* name)
+int Realloc(char* name, int num)
 {
 	// 배열이 존재하는지 확인
 	HashSlot* original_slot = AccessSlot(name);
@@ -581,14 +581,10 @@ int Realloc(char* name)
 	Address size = main_memory[original_address] >> 3;
 	Address original_num = (main_memory[original_address + 1] << 8) + main_memory[original_address + 2];
 
-	printf("Original size of the array is %d. What size do you want?: ", original_num);
-	int new_num;
-	scanf("%d", &new_num);
-
 	// 배열의 원래 메모리 크기와, 새로 할당할 메모리의 크기
 	Address original_size = original_num * size + 3;
         original_size = ((original_size / 4) + (original_size % 4 > 0)) * 4;
-        Address new_size = new_num * size + 3;
+        Address new_size = num * size + 3;
         new_size = ((new_size / 4) + (new_size % 4 > 0)) * 4;
 
 	// 메모리의 크기가 동일하다면 바로 리턴
@@ -617,8 +613,8 @@ int Realloc(char* name)
 		// 메모리를 이어서 할당할 수 있다면 배열의 원소 개수 변경 후 늘어난 메모리 초기화
 		if (i)
 		{
-			main_memory[original_address + 1] = (new_num >> 8) && 0xff;
-			main_memory[original_address + 2] = new_num && 0xff;
+			main_memory[original_address + 1] = (num >> 8) && 0xff;
+			main_memory[original_address + 2] = num && 0xff;
 			for (int i = original_size; i < new_size; i++) main_memory[original_address + i] = 0;
 			return 0;
 		}
@@ -651,8 +647,8 @@ int Realloc(char* name)
 
 		// 새로운 메모리의 정보 입력
 		main_memory[new_address] = main_memory[original_address];
-		main_memory[new_address + 1] = (new_num >> 8) & 0xff;
-        	main_memory[new_address + 2] = new_num & 0xff;
+		main_memory[new_address + 1] = (num >> 8) & 0xff;
+        	main_memory[new_address + 2] = num & 0xff;
 
 		// 메모리를 복사한 후, 늘어난 메모리를 초기화
 		for (int i = 3; i < original_size; i++) main_memory[new_address + i] = main_memory[original_address + i];
@@ -666,6 +662,7 @@ int Realloc(char* name)
 		return 0;
 	}
 }
+*/
 
 // 메모리를 해제할 함수
 // hash table에서 slot을 찾은 다음, 메모리의 시작 address부터 4B마다 해제
@@ -741,7 +738,7 @@ int Read(char* name)
 			address += block_size;
 		}
 
-		printf("%lld ", ret);
+		printf("%llx ", ret);
 
 	}
 
@@ -751,36 +748,15 @@ int Read(char* name)
 
 int Write(char* name)
 {
-	int index1 = 0, index2 = 0;
-	for (int i = 0; name[i]; i++)
-	{
-		if (name[i] == ' ')
-		{
-			if (!index1)
-			{
-				name[i] = '\0';
-				index1 = i + 1;
-			}
-
-			else
-			{
-				name[i] = '\0';
-				index2 = i + 1;
-				break;
-			}
-		}
-	}
-	
-	if (strcmp(name + index1, "=")) return -1;
-	
-	long long data = atoi(name + index2);
-	if (!data && strcmp(name + index2, "0")) return -1;
-
 	// 배열의 이름과 인덱스를 해석하기
 	Address size;
 	int condition = 0, type = 1;
         Address address = InterpretName(name, &size, &type, &condition);
         if (condition != 2 || !address) return -1;  // 에러 발생 시 -1 리턴
+
+	unsigned long long data;
+	printf("What is the data to save?: ");
+        scanf("%llx", &data);
 
         int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
         int access_num = (size / block_size) + (size % block_size > 0);  // 캐시 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
