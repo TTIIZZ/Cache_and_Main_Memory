@@ -102,7 +102,7 @@ void FreeBlock(CacheBlock* upper_block, Address index, int now_level);
 Address GetIndex(Address address, int now_level);
 Address GetTag(Address address, int now_level);
 
-Address InterpretName(char* name, Address* num, int* type, int* condition);
+Address InterpretName(char* name, int* num, int* type, int* condition);
 HashSlot* AccessSlot(char* name);
 int HashFunction(char* name);
 
@@ -111,92 +111,117 @@ int main(void)
 	// main memory 할당 후 값 초기화
 	main_memory = (unsigned char*)calloc(65536, sizeof(unsigned char));
 
-	// 캐시 메모리의 정보 입력 후 메모리 생성 -> 잘못된 사이즈 입력 시 다시 입력
+	// 시뮬레이션 반복 실행
 	while (1)
 	{
-		char execution;
-		if (isatty(0)) printf("Will you start a new execution? [Y / N]: ");
-		scanf(" %c", &execution);
-		if (isatty(0)) printf("\n");
-		switch (execution)
-		{
-			case 'Y': case 'y':
-				break;
+		// 동작의 종류와, 변수의 이름을 담을 변수 
+		char type;
+                char name[NAME_SIZE];
+		
+		// 새로운 회차 실행 여부 결정
+		if (isatty(0)) printf("Will you start a new execution? [(Y)es / (N)o]: ");
+		scanf(" %c", &type);
 
-			case 'N': case 'n':
-				execution = 0;
+		// 틀린 입력일 경우 다시 입력
+		switch (type)
+		{
+			case 'Y': case 'y': case 'N': case 'n':
 				break;
 
 			default:
 				printf("Wrong input!\n");
+				printf("\n");
 				continue;
 		}
-		if (!execution) break;
+		printf("\n");
+		if (type == 'N' || type == 'n') break;  // 프로그램 종료
 
+		// cache memory와 array table 메모리 할당
 		MakeCache();
 		MakeArrayTable();
-
-		char type;
-		int temp_address;
-		Address address;
-		int size;
-		unsigned long long data;
-		char name[NAME_SIZE];
-		int length;
-		int num;
 	
+		// 동작 반복 수행
 		while (1)
 		{
-			if (isatty(0)) printf("Input the access type [A / F / R / W / P / Q]: ");
+			// 동작의 종류 입력
+			if (isatty(0)) printf("Input the access type [(A)lloc / (F)ree / (R)ead / (W)rite / (P)rint / (Q)uit]: ");
 			scanf(" %c", &type);
-			if (type == 'Q' || type == 'q') break;
 
+			// 이번 회차 종료
+			if (type == 'Q' || type == 'q')
+			{
+				if (isatty(0)) printf("\n");
+				break;
+			}
+
+			// 입력에 따라 맞는 동작 수행
 			switch (type)
 			{
-				case 'A': case 'a': case 'F': case 'f':
-					if (type == 'A' || type == 'a')
-					{
-						if (isatty(0)) printf("Input the type of memory allocation [N / R]: ");
-						scanf(" %c", &type);
+				// Alloc: 새로운 메모리의 할당인지, 메모리 재할당인지 결정 후 맞는 함수 실행
+				case 'A': case 'a':
 
-						if (!(type == 'N' || type == 'n' || type == 'R' || type == 'r'))
-						{
-							printf("Wrong input!\n");
-							continue;
-						}
+					if (isatty(0)) printf("Input the type of memory allocation [(N)ew / (R)alloc]: ");
+					scanf(" %c", &type);
+
+					// 잘못된 입력 시 재입력
+					if (!(type == 'N' || type == 'n' || type == 'R' || type == 'r'))
+					{
+						printf("Wrong input!\n");
+						break;
 					}
 
-					if ((type == 'F' || type == 'f') && (isatty(0))) printf("Input the name of array that you want to deallocate: ");
-					else if (isatty(0)) printf("Input the string that declare array: ");
+					// 동작을 실제 수행하기 위해 문자열 입력
+					if (isatty(0))
+					{
+						if ((type == 'N' || type == 'n')) printf("Input the string that declare array: ");
+						else if (type == 'R' || type == 'r') printf("Input the name of array: ");
+					}
 					scanf(" %[^\n]s", name);
 
+					// 함수 실행
 					if (type == 'N' || type == 'n') Calloc(name);
 					else if (type == 'R' || type == 'r') Realloc(name);
-					else if (type == 'F' || type == 'f') Free(name);
 
 					break;
 
-				case 'R': case 'r': case 'W': case 'w':
-					if ((type == 'R' || type == 'r') && isatty(0)) printf("What array or element do you want?: ");
-					else if (isatty(0)) printf("Input the string that means writing the number into element: ");
+				// Free: 배열 이름 입력 후 함수 실행
+				case 'F': case 'f':
+
+					if (isatty(0)) printf("Input the name of array that you want to deallocate: ");
 					scanf(" %[^\n]s", name);
-
-					if (type == 'R' || type == 'r') Read(name);
-					else Write(name);
-
+					Free(name);
 					break;
 
+				// Read: 배열 혹은 원소 입력 후 함수 실행
+				case 'R': case 'r':
+
+					if (isatty(0)) printf("What array or element do you want?: ");
+					scanf(" %[^\n]s", name);
+					Read(name);
+					break;
+
+				// Write: 원소의 이름 입력 후 함수 실행
+				case 'W': case 'w':
+
+					if (isatty(0)) printf("Input the string that means writing the number into element: ");
+					scanf(" %[^\n]s", name);
+					Write(name);
+					break;
+
+				// Print: print할 요소 선택 후 함수 실행
 				case 'P': case 'p':
-					if (isatty(0)) printf("What do you want to print? [C / A]: ");
+
+					if (isatty(0)) printf("What do you want to print? [(C)ache_memory / (A)rray_table]: ");
 					scanf(" %c", &type);
 
 					if (type == 'C' || type == 'c') PrintCache();
 					else if (type == 'A' || type == 'a') PrintArrayTable();
-					else printf("Wrong input!\n");
+					else printf("Wrong input!\n");  // 잘못된 입력
 					break;
 
+				// 잘못된 입력
 				default:
-					printf("Wrong input!\n");	
+					printf("Wrong input!\n");
 			}
 
 			printf("\n");
@@ -207,8 +232,8 @@ int main(void)
 		FreeArrayTable();
 	}
 
+	// 메인 메모리 해제 후 프로그램 종료
 	free(main_memory);
-
 	return 0;
 }
 
@@ -219,7 +244,7 @@ int main(void)
 // 총 캐시 사이즈를 구했을 때 상위 메모리보다 크고, 메인메모리보다 작은지 확인
 void MakeCache()
 {
-	if (isatty(0)) printf("What is the max level of cache memory?: ");
+	if (isatty(0)) printf("What is the max level of the cache memory?: ");
         scanf("%d", &level);
         if (isatty(0)) printf("\n");
 	
@@ -278,22 +303,27 @@ void MakeCache()
 					if (now_cache->block_size <= 0 || now_cache->block_num <= 0) printf(" / ");
 					printf("set num");
 				}
-				printf("\n");
+				printf("\n\n");
 
 				continue;
 			}
 
 			// block size와 cache size 확인
-			// block size가 상위 메모리보다 작거나, cache size가 메인 메모리보다 크다면 재입력
+                        // block size 또는 cache size가 상위 메모리보다 작거나, cache size가 메인 메모리보다 크다면 재입력
 			now_cache->cache_size = now_cache->block_size * now_cache->block_num * now_cache->set_num;
 			int wrong = 0;
 			if (now_level > 1)
         		{
-                		if (now_cache->block_size < cache_memory[now_level - 1].block_size)
-                		{
-                        		printf("Level %d cache block is smaller than level %d cache!\n", now_level, now_level - 1);
-                        		wrong = -1;
-                		}
+				if (now_cache->block_size < (now_cache - 1)->block_size)
+                                {
+                                        printf("Level %d cache block is smaller than level %d cache block!\n", now_level, now_level - 1);
+                                        wrong = -1;
+                                }
+                                if (now_cache->cache_size < (now_cache - 1)->cache_size)
+                                {
+                                        printf("Level %d cache size is smaller than level %d cache size!\n", now_level, now_level - 1);
+                                        wrong = -1;
+                                }
         		}
 			if (now_cache->cache_size > 65536)
 			{
@@ -335,7 +365,6 @@ void FreeCache()
 				now_set->first = temp_block->right;
 				FreeBlock(temp_block, i, now_level);
                         }
-			now_set->num = 0;
                 }
 
                 // set의 메모리 해제
@@ -392,7 +421,8 @@ void PrintCache()
 		
 		// 마지막으로 현재 level cache의 access 정보 출력
 		printf("access count: %d / hit count: %d / miss count : %d\n", now_cache->access_count, now_cache->hit_count, now_cache->miss_count);
-        	printf("\n");
+		printf("hit rate: %lf\n", (double)now_cache->hit_count / now_cache->access_count);
+		printf("\n");
         	printf("******************************************\n");
         	printf("\n");
         }
@@ -451,15 +481,16 @@ void PrintArrayTable()
 
 // 메모리를 할당할 함수
 // name: 배열의 이름
-// num: 원소의 수
-// size: 원소의 크기
-// 메모리를 앞에서부터 확인.
+//
+// name을 해석 후, 배열의 이름과 자료형, 원소의 수 얻어내기
+//
+// 실제 할당 시 메모리를 앞에서부터 확인.
 //   - 할당할 수 있는 메모리가 나왔을 경우 필요한 크기만큼 할당이 가능한지 확인 후 가능하면 할당
 //   - 이미 할당된 메모리를 발견했을 경우 해당 배열을 건너뛰고 바로 다음 메모리부터 확인
 // 할당할 수 있는 메모리를 찾았다면 해당 메모리 초기화 후 해당 배열의 이름과 시작 주소를 해시 테이블에 저장
 int Calloc(char* name)
 {
-	// 배열의 이름과 원소의 수, 원소의 데이터 크기를 해석하기
+	// 데이터 타입과 분리되는 부분 찾기
 	int start = 0;
 	for (int i = strlen(name); i >= 0; i--)
 	{
@@ -471,50 +502,75 @@ int Calloc(char* name)
 		}
 	}
 
+	// 데이터 타입이 제대로 명시되지 않았다면 에러
 	if (!start)
 	{
 		printf("Data type does not exist!\n");
 		return -1;
 	}
 
-	printf("%s\n", name);
+	// 데이터 타입 저장
 	int size = 0;
 	if (!strcmp(name, "char")) size = 1;
 	else if (!strcmp(name, "short")) size = 2;
 	else if (!strcmp(name, "int")) size = 4;
 	else if (!strcmp(name, "long long")) size = 8;
 	
+	// 잘못된 데이터 타입이라면 에러
 	if (!size)
 	{
 		printf("Wrong data type!\n");
 		return -1;
 	}
 
+	// name을 배열의 이름부터로 변경
 	char temp[NAME_SIZE];
 	strcpy(temp, name + start);
 	strcpy(name, temp);
 
-	Address num;
+	// 배열의 이름 해석
+	int num;
 	int condition = 0, type = 0;
 	InterpretName(name, &num, &type, &condition);
 
-        // 같은 이름의 배열이 이미 존재하면 에러
-        if (condition == -1 && AccessSlot(name))
+        // 틀린 명령이거나, 같은 이름의 배열이 이미 존재하면 에러
+        if (condition != 2)
         {
-                printf("Already exist!\n");
+                printf("Wrong input!\n");
                 return -1;
         }
+	if (AccessSlot(name))
+	{
+		printf("Already exist!\n");
+                return -1;
+	}
 
         // 현재 할당하는 메모리의 정보
         Address ret_address = 0;  // 배열의 시작 주소
-        Address memory_size = num * size + 3;
-        memory_size = ((memory_size / 4) + (memory_size % 4 > 0)) * 4;  // 배열의 크기 (데이터 외의 정보까지 포함한 크기)
+
+	// 배열의 크기 (데이터 외의 정보까지 포함한 크기) 임시 저장
+	int temp_size = num * size + 3;
+        temp_size = ((temp_size / 4) + (temp_size % 4 > 0)) * 4;
+
+	// 크기가 너무 크면 에러
+	if (temp_size > 65536)
+	{
+		printf("It can't be allocated!\n");
+		return -1;
+	}
+
+	// 배열의 크기
+        Address memory_size = temp_size;
 
         // 할당할 수 있는 메모리의 주소를 찾을 때까지 반복
         while (1)
         {
-                // 할당할 수 있는 메모리가 남아있지 않은 경우
-                if (0xffff - ret_address + 1 < memory_size) return -1;
+                // 할당할 수 있는 메모리가 남아있지 않은 경우 에러
+                if (0xffff - ret_address + 1 < memory_size)
+		{
+			printf("It can't be allocated!\n");
+			return -1;
+		}
 
                 // 4B씩 메모리 상태 확인
                 int i;
@@ -556,14 +612,11 @@ int Calloc(char* name)
         if (new_slot->right) new_slot->right->left = new_slot;
         array_table[hash_index] = new_slot;
 
-	printf("%x\n", ret_address);
-
         return 0;
 }
 
 // 메모리를 재할당할 함수
 // name: 배열의 이름
-// num: 원소의 개수
 //
 // 배열의 원래 크기와 비교
 //   - 더 작아지는 경우 메모리를 일부 해제한 후 리턴
@@ -572,24 +625,40 @@ int Calloc(char* name)
 //     - 불가능하다면 새로운 위치의 메모리를 찾아 할당 (할당할 수 없다면 -1 리턴 -> 실패)
 int Realloc(char* name)
 {
-	// 배열이 존재하는지 확인
+	// 배열이 존재하는지 확인 -> 존재하지 않으면 에러
 	HashSlot* original_slot = AccessSlot(name);
-	if (!original_slot) return -1; // 배열이 없다면 -1 리턴
+	if (!original_slot)
+	{
+		printf("Dose not exist!\n");
+		return -1;
+	}
 
 	// 배열의 정보 읽어오기
 	Address original_address = original_slot->address;
 	Address size = main_memory[original_address] >> 3;
 	Address original_num = (main_memory[original_address + 1] << 8) + main_memory[original_address + 2];
 
-	printf("Original size of the array is %d. What size do you want?: ", original_num);
+	if (isatty(0)) printf("Original size of the array is \"%d\". What size do you want?: ", original_num);
 	int new_num;
 	scanf("%d", &new_num);
 
-	// 배열의 원래 메모리 크기와, 새로 할당할 메모리의 크기
+	// 배열의 원래 메모리 크기
 	Address original_size = original_num * size + 3;
         original_size = ((original_size / 4) + (original_size % 4 > 0)) * 4;
-        Address new_size = new_num * size + 3;
-        new_size = ((new_size / 4) + (new_size % 4 > 0)) * 4;
+
+	// 배열의 새로운 크기 임시 저장
+        int temp_size = new_num * size + 3;
+        temp_size = ((temp_size / 4) + (temp_size % 4 > 0)) * 4;
+
+        // 크기가 너무 크면 에러
+        if (temp_size > 65536)
+        {
+                printf("It can't be allocated!\n");
+                return -1;
+        }
+
+        // 배열의 크기
+        Address new_size = temp_size;
 
 	// 메모리의 크기가 동일하다면 바로 리턴
 	if (new_size == original_size) return 0;
@@ -617,8 +686,8 @@ int Realloc(char* name)
 		// 메모리를 이어서 할당할 수 있다면 배열의 원소 개수 변경 후 늘어난 메모리 초기화
 		if (i)
 		{
-			main_memory[original_address + 1] = (new_num >> 8) && 0xff;
-			main_memory[original_address + 2] = new_num && 0xff;
+			main_memory[original_address + 1] = (new_num >> 8) & 0xff;
+			main_memory[original_address + 2] = new_num & 0xff;
 			for (int i = original_size; i < new_size; i++) main_memory[original_address + i] = 0;
 			return 0;
 		}
@@ -628,7 +697,11 @@ int Realloc(char* name)
 		while (1)
         	{
                 	// 할당할 수 있는 메모리가 남아있지 않은 경우 메모리 변화 X
-                	if (0xffff - new_address + 1 < new_size) return -1;
+                	if (0xffff - new_address + 1 < new_size)
+                	{
+                        	printf("It can't be reallocated!\n");
+                        	return -1;
+                	}
 
                 	// 4B씩 메모리 상태 확인
                 	int i;
@@ -671,9 +744,13 @@ int Realloc(char* name)
 // hash table에서 slot을 찾은 다음, 메모리의 시작 address부터 4B마다 해제
 int Free(char* name)
 {
-        // 제거할 slot 찾기
+        // 제거할 slot 찾기 -> 찾지 못한 경우 에러
         HashSlot* temp_slot = AccessSlot(name);
-        if (!temp_slot) return -1;  // 찾지 못한 경우 -1 리턴
+        if (!temp_slot)
+	{
+		printf("Does not exist!\n");
+		return -1;
+	}
 
         // 배열의 시작 주소와 메모리의 크기를 찾은 후 4B씩 메모리 해제
         Address address = temp_slot->address;
@@ -692,21 +769,31 @@ int Free(char* name)
 }
 
 // 메모리를 읽고 리턴할 함수
-// address: 접근할 데이터의 주소, size: 읽을 데이터의 크기
-// level 1 cache memory에서 읽어오기. data의 size가 너무 크다면 여러번 접근해 읽어오기.
+// name: 읽어올 배열 또는 원소
+//
+// name을 해석하여 배열 전체인지 원소 하나인지 확인
+//
+// level 1 cache memory에서 읽어오기. data의 size가 너무 커 한 block에 담기지 않는다면 여러번 접근해 읽어오기.
 // 읽어온 데이터들을 1byte씩 왼쪽으로 밀면서 리턴값에 더하기.
+//
+// 배열을 읽어올 경우 맨 앞의 원소부터 하나씩 읽어오기
 int Read(char* name)
 {
-	// 배열의 이름과 인덱스를 해석하기
-	Address size;
-	int condition = 0, type = 1;
+	// 배열의 이름과 인덱스를 해석하기 -> 잘못된 원소일 때 에러
+	int size;
+	int condition = 0, type = 1;  // type -> index
 	Address base_address = InterpretName(name, &size, &type, &condition);
-	if (condition == -1 || !base_address) return -1;  // 에러 발생 시 -1 리턴
+	if (condition == -1)
+	{
+		printf("Wrong input!\n");
+		return -1;
+	}
+	if (!base_address) return -1;
 
 	int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
         int access_num = (size / block_size) + (size % block_size > 0);  // 캐시 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
 
-	printf("data: ");
+	if (isatty(0)) printf("data: ");
 	for (int index = 0; index < type; index++)
 	{
 		Address address = base_address + index * size;
@@ -714,7 +801,7 @@ int Read(char* name)
 		int base_offset = (address % block_size);  // block에서 data를 출력할 때 사용할 base offset (data size가 block size 이상일 때에는 0, 아닐 때에>는 address의 뒤 몇자리.)
 
 		// 리턴값: 0으로 초기화
-		unsigned long long ret = 0;
+		long long ret = 0;
        
 		// 접근할 data의 size가 block size보다 작다면, 한 번만 접근.
         	// 접근할 data의 size가 block size보다 크다면, address에 block size를 계속 더해가며 cache에 접근.
@@ -741,16 +828,30 @@ int Read(char* name)
 			address += block_size;
 		}
 
-		printf("%lld ", ret);
+		// 값이 음수일 경우 보정
+		if (size == 1 && ret >> 7) ret |= 0xffffffffffffff00;
+		if (size == 2 && ret >> 15) ret |= 0xffffffffffff0000;
+		if (size == 4 && ret >> 31) ret |= 0xffffffff00000000;
+
+		// 출력
+		if (isatty(0)) printf("%lld ", ret);
 
 	}
 
-	printf("\n");
+	if (isatty(0)) printf("\n");
 	return 0;
 }
 
+// 메모리를 읽고 리턴할 함수
+// name: 접근할 원소
+//
+// name을 해석하여 어떤 원소에 어떤 값을 넣는지 알아내기
+//
+// level 1 cache memory에서 읽어오기. data의 size가 너무 커 한 block에 담기지 않는다면 여러번 접근해 읽어오기.
+// 접근할 때, 하위 비트부터 덮어쓰기 위해 큰 주소부터 접근하기 (Read의 반대 과정)
 int Write(char* name)
 {
+	// 이름과 값 분리
 	int index1 = 0, index2 = 0;
 	for (int i = 0; name[i]; i++)
 	{
@@ -771,16 +872,31 @@ int Write(char* name)
 		}
 	}
 	
-	if (strcmp(name + index1, "=")) return -1;
+	// A = B의 형태가 아니면 에러.
+	if (strcmp(name + index1, "="))
+	{
+		printf("Wrong input!\n");
+		return -1;
+	}
 	
+	// 값 얻어내기 -> 잘못된 수라면 에러
 	long long data = atoi(name + index2);
-	if (!data && strcmp(name + index2, "0")) return -1;
+	if (!data && strcmp(name + index2, "0"))
+	{
+		printf("Wrong number!\n");
+		return -1;
+	}
 
-	// 배열의 이름과 인덱스를 해석하기
-	Address size;
+	// 배열의 이름과 인덱스를 해석하기 -> 잘못된 원소일 때 에러
+	int size;
 	int condition = 0, type = 1;
         Address address = InterpretName(name, &size, &type, &condition);
-        if (condition != 2 || !address) return -1;  // 에러 발생 시 -1 리턴
+        if (condition != 2)
+	{
+		printf("Wrong input!\n");
+		return -1;
+	}
+	if (!address) return -1;
 
         int block_size = cache_memory[1].block_size;  // level 1 cache block의 size
         int access_num = (size / block_size) + (size % block_size > 0);  // 캐시 메모리 접근 횟수 (block size의 배수일 때는 뒤의 항은 더해지지 않음)
@@ -1011,8 +1127,9 @@ Address GetTag(Address address, int now_level)
 
 // 배열의 이름을 해석하고, 주소를 얻어낼 함수
 // name: 배열의 이름
+// *type: 0일 때는 이름 해석까지, 1일 때는 주소 찾기까지
 // *num: 원소의 크기, 원소의 index, 원소의 개수 등 다양하게 사용
-Address InterpretName(char* name, Address* num, int* type, int* condition)
+Address InterpretName(char* name, int* num, int* type, int* condition)
 {
 	// 원소의 주소
 	Address ret_address;
@@ -1075,23 +1192,26 @@ Address InterpretName(char* name, Address* num, int* type, int* condition)
 			// 2: 확인이 끝난 상태
 			// 확인이 끝났는데 문자열이 남아있다면 에러 -> 상태 -1로 이동 후 종료
 			case 2:
-				if (name[i])
-				{
-					*condition = -1;
-					return 0;
-				}
+				*condition = -1;
+				return 0;
 		}
 	}
 
+	// 상태에 따라 *num 변경
 	if (*condition == 0) *num = 0;
-	else *num = atoi(name + end);
+	else *num = atoi(name + end);  // 인덱스
 
+	// *type이 0 -> 종료
 	if (*type == 0) return 0;
 
-	// 원하는 배열의 정보를 담은 slot 찾기
+	// 원하는 배열의 정보를 담은 slot 찾기 -> 찾지 못했을 때 리턴 0 (원소의 주소로 0이 나올 수 없음 -> 에러)
 	int hash_index = HashFunction(name);
 	HashSlot* ret_slot = AccessSlot(name);
-	if (!ret_slot) return 0;  // 찾지 못했을 때 리턴 0 (원소의 주소로 0이 나올 수 없음 -> 에러)
+	if (!ret_slot)
+	{
+		printf("Does not exist!\n");
+		return 0;
+	}
 
 	// LRU 기법
 	if (ret_slot->left)
@@ -1105,7 +1225,11 @@ Address InterpretName(char* name, Address* num, int* type, int* condition)
 	}
 
 	// 배열의 인덱스를 벗어났다면 에러
-	if (*num >= (main_memory[ret_slot->address + 1] << 8) + main_memory[ret_slot->address + 2]) return 0;
+	if (*num >= (main_memory[ret_slot->address + 1] << 8) + main_memory[ret_slot->address + 2])
+	{
+		printf("Exceeding the number of max index\n");
+		return 0;
+	}
 
 	// 원소의 size를 찾은 후, 그에 따른 배열에서의 주소 리턴
 	if (*condition == 0) *type = (main_memory[ret_slot->address + 1] << 8) + main_memory[ret_slot->address + 2];
